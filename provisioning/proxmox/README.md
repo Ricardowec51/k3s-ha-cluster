@@ -2,6 +2,17 @@
 
 Este módulo permite la creación automatizada de nodos (Master y Worker) en un clúster de Proxmox optimizados para la instalación de K3s.
 
+## 🚀 Inicio Rápido (One-Liner)
+
+Si ya tienes Ansible instalado, puedes descargar y ejecutar el asistente con este comando:
+
+```bash
+curl -L -O https://raw.githubusercontent.com/Ricardowec51/k3s-ha-cluster/main/provisioning/proxmox/deploy_node_interactive.sh && \
+curl -L -O https://raw.githubusercontent.com/Ricardowec51/k3s-ha-cluster/main/provisioning/proxmox/deploy_single_node.yml && \
+chmod +x deploy_node_interactive.sh && ./deploy_node_interactive.sh
+```
+
+
 ## Contenido del Módulo
 
 - **`deploy_node_interactive.sh`**: Script "God Mode" interactivo que valida red, IDs y almacenamiento antes de desplegar.

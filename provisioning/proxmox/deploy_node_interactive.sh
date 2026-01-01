@@ -35,7 +35,9 @@ check_ip_ping() {
 }
 
 get_pve_ticket() {
-    curl -k -s -d "username=$2" -d "password=$3" "https://$1:8006/api2/json/access/ticket" | jq -r '.data.ticket' 2>/dev/null
+    local ticket
+    ticket=$(curl -k -s -d "username=$2" -d "password=$3" "https://$1:8006/api2/json/access/ticket" | jq -r '.data.ticket' 2>/dev/null)
+    echo "$ticket"
 }
 
 fetch_nodes() {
@@ -75,7 +77,8 @@ while true; do
     echo -e "Storages Activos: ${CYAN}$VALID_STORAGES${NC}"
     read -p "Selecciona Storage destino ([NFS_SHARE]): " STORAGE
     STORAGE=${STORAGE:-"NFS_SHARE"}
-    [[ " $VALID_STORAGES " =~ " $STORAGE " ]] && break || echo -e "${RED}Storage inválido.${NC}"
+    if [[ " $VALID_STORAGES " =~ " $STORAGE " ]]; then break; 
+    else echo -e "${RED}Storage inválido.${NC}"; fi
 done
 
 # 2. GESTIÓN DE PLANTILLA
@@ -100,14 +103,14 @@ fi
 if [[ "$RECREAR" == "s" ]]; then
     read -p "¿En qué nodo construirla? (Sugerido: nuc10): " BUILD_NODE
     echo -e "${BLUE}Iniciando Bootstrap de Plantilla via SSH...${NC}"
-    ssh -o StrictHostKeyChecking=no "root@$PVE_IP" << EOF
+    ssh -o StrictHostKeyChecking=no "root@$PVE_IP" << 'EOF'
         set -e
         wget -q --show-progress -O /tmp/noble.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
         qm destroy $TPL_ID 2>/dev/null || true
         qm create $TPL_ID --name "u24-tpl" --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0
         qm importdisk $TPL_ID /tmp/noble.img $STORAGE
-        DISK_ID=\$(pvesm list $STORAGE | grep "vm-$TPL_ID-disk" | awk '{print \$1}' | head -n 1)
-        qm set $TPL_ID --scsihw virtio-scsi-pci --scsi0 \$DISK_ID --ide2 $STORAGE:cloudinit --boot order=scsi0 --agent 1
+        DISK_ID=$(pvesm list $STORAGE | grep "vm-$TPL_ID-disk" | awk '{print $1}' | head -n 1)
+        qm set $TPL_ID --scsihw virtio-scsi-pci --scsi0 $DISK_ID --ide2 $STORAGE:cloudinit --boot order=scsi0 --agent 1
         qm template $TPL_ID
         rm /tmp/noble.img
 EOF
@@ -151,7 +154,8 @@ collect_nodes() {
 
         while true; do
             read -p "Nodo Destino (Opciones: $VALID_NODES): " T_NODE
-            [[ " $VALID_NODES " =~ " $T_NODE " ]] && { nodes[$i]=$T_NODE; break; } || echo -e "${RED}Nodo inválido.${NC}"
+            if [[ " $VALID_NODES " =~ " $T_NODE " ]]; then nodes[$i]=$T_NODE; break;
+            else echo -e "${RED}Nodo inválido.${NC}"; fi
         done
     done
 }
