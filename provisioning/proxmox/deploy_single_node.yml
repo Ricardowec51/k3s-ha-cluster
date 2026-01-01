@@ -1,0 +1,79 @@
+---
+- name: Deploy Single Node via Clone (Static IP Fixed)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    pve_api_ip: ""
+    pve_user: ""
+    pve_pass: ""
+    src_node: ""
+    target_node: ""
+    template_id: ""
+    vm_id: ""
+    vm_name: ""
+    vm_ip: ""
+    vm_mem: ""
+    vm_disk: ""
+    storage: "NFS_SHARE"
+    gateway: "192.168.1.1"
+    ssh_key_path: "~/.ssh/id_rsa.pub"
+    vm_user: "rwagner"
+
+  tasks:
+    - name: "Step 1: Clone VM {{ template_id }} to {{ vm_id }} (Stopped)"
+      community.general.proxmox_kvm:
+        api_host: "{{ pve_api_ip }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ src_node }}"
+        vmid: "{{ template_id }}"
+        clone: "{{ template_id }}"
+        newid: "{{ vm_id }}"
+        name: "{{ vm_name }}"
+        target: "{{ target_node }}"
+        full: true
+        storage: "{{ storage }}"
+        timeout: 600
+        validate_certs: false
+
+    - name: "Step 2: Update Hardware and Wait"
+      community.general.proxmox_kvm:
+        api_host: "{{ pve_api_ip }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ target_node }}"
+        vmid: "{{ vm_id }}"
+        memory: "{{ vm_mem }}"
+        cores: 2
+        sockets: 1
+        boot: "order=scsi0;ide2"
+        scsi:
+          scsi0: "{{ storage }}:{{ vm_disk | regex_replace('G', '') }}"
+        update: true
+        validate_certs: false
+
+    - name: "Step 3: FORCING STATIC IP {{ vm_ip }} via Cloud-Init"
+      community.general.proxmox_kvm:
+        api_host: "{{ pve_api_ip }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ target_node }}"
+        vmid: "{{ vm_id }}"
+        ipconfig:
+          ipconfig0: "ip={{ vm_ip }}/24,gw={{ gateway }}"
+        ciuser: "{{ vm_user }}"
+        sshkeys: "{{ lookup('file', ssh_key_path) }}"
+        update: true
+        validate_certs: false
+
+    - name: "Step 4: Power On VM"
+      community.general.proxmox_kvm:
+        api_host: "{{ pve_api_ip }}"
+        api_user: "{{ pve_user }}"
+        api_password: "{{ pve_pass }}"
+        node: "{{ target_node }}"
+        vmid: "{{ vm_id }}"
+        state: started
+        validate_certs: false
