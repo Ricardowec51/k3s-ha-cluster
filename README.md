@@ -1,14 +1,10 @@
-# K3s High Availability Cluster Setup
-This repository contains the necessary scripts to deploy a **K3s High Availability (HA)** cluster using `k3sup`, `kube-vip`, and `MetalLB`.
+# K3s High Availability Cluster - Professional Automated Deployment
 
-## 🚀 Quick Start
-You can download and execute the complete installer with a single command:
+This repository provides a production-grade orchestration toolset to deploy and manage a **K3s High Availability (HA)** cluster. It uses `k3sup` for agentless installation, `kube-vip` for control-plane redundancy, and `MetalLB` for bare-metal load balancing.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/Ricardowec51/k3s-ha-cluster/main/k3s_installer_complete.sh -o k3s_installer_complete.sh && chmod +x k3s_installer_complete.sh && ./k3s_installer_complete.sh
-```
+---
 
-## 📊 Deployment Workflow
+## 🏗️ General Architecture
 
 ```mermaid
 graph TD
@@ -37,64 +33,96 @@ graph TD
 
 ---
 
-### 📑 Exhaustive Execution Breakdown
+## 🛠️ Detailed Script Documentation
 
-The `k3s_installer_complete.sh` script is an engineering workflow divided into stages to guarantee stability:
+### 1. `k3s_installer_complete.sh` (Main Orchestrator)
+This is the core of the repository. It automates the entire lifecycle of the cluster setup.
 
-#### **Phase 1: Registry and Audit**
-The script generates a digital footprint for every execution in `~/.k3s_usage_tracking.log`. This allows tracking of how many times the cluster has been deployed, identifying if it's a new installation or an update.
+*   **What it does:**
+    *   Validates local and remote environment prerequisites.
+    *   Balances the control plane across 3 Master nodes using `etcd`.
+    *   Implements **Kube-VIP** for a floating Virtual IP (Zero-Downtime API).
+    *   Joins Worker nodes with specific labels (`longhorn=true`, `worker=true`).
+    *   Configures **MetalLB** for automatic External IP assignment.
+    *   Performs an end-to-end test by deploying an Nginx server and verifying HTTP connectivity.
+    *   Generates a comprehensive Markdown report of the installation.
 
-#### **Phase 2: Fortification and Backup**
-Before any system modification:
-*   **Backup**: Creates security copies of your current `.kube/config` and SSH files.
-*   **Rollback**: Dynamically generates a "rollback" script in the backup folder in case of failure.
-*   **Kernel Check**: Verifies that `overlay` and `br_netfilter` modules are active (required for container traffic).
-
-#### **Phase 3: Technology Foundation**
-Installs specific, validated binaries:
-*   **k3sup v0.13.11**: For agentless remote deployment.
-*   **kubectl**: Configured for the new `k3s-ha-dev` context.
-
-#### **Phase 4: Primary Master Initialization**
-Launches the `k3sup install` command on **Master 1**. At this point, the cluster database is configured, and the node is tainted to prevent accepting worker workloads yet, protecting the control plane.
-
-#### **Phase 5: High Availability (Kube-VIP)**
-The most critical component for HA. It creates a **Virtual IP (VIP)**. If Master 1 goes down, the IP "floats" to Master 2 or 3 in milliseconds, ensuring the cluster never stops responding.
-
-#### **Phase 6: Scaling Control Plane and Workers**
-Remaining Masters and Workers join sequentially. In development mode, the script waits between nodes to ensure the distributed database (etcd) synchronizes correctly.
-
-#### **Phase 7: Networking and Load Balancing (MetalLB)**
-Installs MetalLB in L2 mode. This enables the cluster to assign real IPs from your local network to Kubernetes services. Without this, your applications would only be accessible internally.
-
-#### **Phase 8: Functional Certification (Real-World Test)**
-To ensure all previous work is valid:
-1.  Deploys an **Nginx Deployment**.
-2.  Creates a **LoadBalancer Service**.
-3.  Waits for MetalLB to assign an IP.
-4.  Launches a real HTTP request. If the server responds "Welcome to nginx", the test is successful.
-
-#### **Phase 9: Engineering Report**
-Finally, the script compiles all information (nodes, IPs, pods, error logs) and creates a Markdown (`.md`) report. This is your professional installation log.
+*   **Pre-configuration Requirements:**
+    *   **SSH Keys**: You must have an SSH key (default `id_rsa`) in `~/.ssh/`.
+    *   **User Variables**: Edit the top of the script to set:
+        *   `USER`: The remote username (must have passwordless sudo).
+        *   `INTERFACE`: The network interface (e.g., `eth0`, `ens18`).
+        *   `MASTER_IPs` & `WORKER_IPs`: Static IPs for your VMs.
+        *   `VIP`: A free IP in your subnet for the Cluster API.
+        *   `LB_RANGE`: A reserved range for your exposed services.
 
 ---
 
-## 🛠️ Configuration
-Before executing, make sure to edit the variables at the beginning of the `k3s_installer_complete.sh` script:
-- **USER**: Your Linux user with SSH access.
-- **INTERFACE**: Network interface of the nodes (e.g., `ens18`).
-- **MASTER1, 2, 3**: IPs for your Master nodes.
-- **WORKER1, 2, 3**: IPs for your Worker nodes.
-- **VIP**: Floating IP for API Server access (HA).
-- **LB_RANGE**: IP range for external services (MetalLB).
+### 2. `scripts/utils/health-check.sh`
+A diagnostic utility to ensure the cluster is operating within normal parameters.
 
-## 📦 Contents
-- `k3s_installer_complete.sh`: Main automation script.
-- `scripts/utils/health-check.sh`: Verifies cluster health.
-- `scripts/utils/backup-cluster.sh`: Performs a quick configuration backup.
+*   **What it does:**
+    *   Verifies node status (Ready/NotReady).
+    *   Checks the health of critical system pods in `kube-system` and `metallb-system`.
+    *   Lists active StorageClasses and PVCs.
+    *   Identifies LoadBalancer services and their assigned IPs.
 
-## 📋 Prerequisites
-- 3 VMs with Ubuntu 22.04/24.04 for Masters.
-- At least 1 VM for Workers.
-- SSH access via keys (passwordless) configured between the local machine and the nodes.
-- `sudo` configured without a password on the nodes.
+*   **Pre-configuration Requirements:**
+    *   Requires `kubectl` installed and a valid `~/.kube/config`.
+    *   Should be run after the cluster installation is complete.
+
+---
+
+### 3. `scripts/utils/backup-cluster.sh`
+A lightweight backup tool for disaster recovery and state auditing.
+
+*   **What it does:**
+    *   Creates a timestamped snapshot folder in `./backups/`.
+    *   Backs up the local `kubeconfig` file.
+    *   Exports the current state of all Nodes and Services to text files.
+
+*   **Pre-configuration Requirements:**
+    *   Requires `kubectl` access.
+    *   Ensure the script has write permissions in the directory where it's executed.
+
+---
+
+## 📋 System Prerequisites (Preparation is Key)
+
+To ensure a successful deployment, your environment **must** meet these conditions:
+
+1.  **OS Support**: Ubuntu 22.04 LTS or 24.04 LTS on all nodes.
+2.  **SSH Access**: 
+    ```bash
+    ssh-copy-id -i ~/.ssh/id_rsa.pub user@node-ip
+    ```
+3.  **Passwordless Sudo**: The user must be able to run `sudo` without being prompted for a password.
+    *   *Fix*: `echo "user ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/user`
+4.  **Network**:
+    *   Static IPs for all nodes.
+    *   Internet access for nodes to download K3s binaries and Docker images.
+5.  **Kernel Modules**: The script will attempt to load them, but ensure `overlay` and `br_netfilter` are not blacklisted.
+
+---
+
+## 🚀 Execution
+
+```bash
+# 1. Clone the repo
+git clone https://github.com/Ricardowec51/k3s-ha-cluster.git
+
+# 2. Configure variables
+nano k3s_installer_complete.sh
+
+# 3. Run the installer
+chmod +x k3s_installer_complete.sh
+./k3s_installer_complete.sh
+```
+
+---
+
+## 📈 Tracking and Logs
+*   **Usage Logs**: `~/.k3s_usage_tracking.log` (Internal use).
+*   **Deployment Logs**: `k3s_dev_test_[timestamp].log`.
+*   **Debug Logs**: `k3s_debug_[timestamp].log`.
+*   **Installation Report**: `k3s_installation_report_[timestamp].md`.
