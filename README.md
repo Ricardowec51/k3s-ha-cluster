@@ -87,6 +87,23 @@ A lightweight backup tool for disaster recovery and state auditing.
 
 ---
 
+### 4. `scripts/utils/monthly-maintenance.sh`
+Guides the monthly Proxmox host update/reboot cycle so that etcd never loses quorum and services stay up. Hosts are handled **one at a time**.
+
+*   **Subcommands:**
+    *   `status` — VM→host layout, node readiness, etcd health, Proxmox quorum, unhealthy pods.
+    *   `prepare <host> [--dry-run]` — pre-flight checks (all nodes Ready, etcd ok, no failing pods, Proxmox quorate, the *other* hosts up for at least `SOAK_MIN` minutes, host does not carry more than one master), CloudNativePG switchover if the primary lives on that host (its PDB would otherwise block the drain), then `cordon` + `drain` of the host's worker.
+    *   `restore <host>` — waits for the host's VMs to be `Ready`, `uncordon`s the worker and verifies etcd and pods before the next host is touched.
+
+*   **Workflow:** `prepare <host>` → update/reboot the host in Proxmox (manual) → `restore <host>` → wait `SOAK_MIN` minutes → next host.
+
+*   **Notes:**
+    *   `kubectl` falls back across the three masters, because the kubeconfig usually points at master-01, which goes down with its host.
+    *   With an even number of Proxmox votes online below the expected count (e.g. a dead node), taking one host down drops Proxmox quorum for the duration: running VMs keep running but nothing can be started or migrated. That is why quorum is only required in `prepare`.
+    *   Host list, master IPs and VMID→node mapping are variables at the top of the script.
+
+---
+
 ## 📋 System Prerequisites (Preparation is Key)
 
 To ensure a successful deployment, your environment **must** meet these conditions:
