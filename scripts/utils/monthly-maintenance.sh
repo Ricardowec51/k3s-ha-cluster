@@ -78,7 +78,9 @@ workers_on_host() { nodes_on_host "$1" | grep worker; }
 masters_on_host() { nodes_on_host "$1" | grep master; }
 
 etcd_ok()   { k get --raw '/readyz?verbose' 2>/dev/null | grep -q '\[+\]etcd ok'; }
-not_ready() { k get nodes --no-headers 2>/dev/null | awk '$2 != "Ready" {print $1}'; }
+# Un nodo en cordon muestra "Ready,SchedulingDisabled": basta con que empiece por Ready.
+not_ready() { k get nodes --no-headers 2>/dev/null | awk '$2 !~ /^Ready/ {print $1}'; }
+node_ready() { [ "$(k get node "$1" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" = "True" ]; }
 bad_pods()  { k get pods -A --no-headers 2>/dev/null | grep -Ev ' (Running|Completed) '; }
 
 # --- status -------------------------------------------------------------------------
@@ -177,7 +179,7 @@ cmd_restore() {
   for t in $(seq 1 90); do
     if pick_api; then
       pend=""
-      for n in $nodes; do k get node "$n" --no-headers 2>/dev/null | awk '{print $2}' | grep -qx Ready || pend="$pend $n"; done
+      for n in $nodes; do node_ready "$n" || pend="$pend $n"; done
       [ -z "$pend" ] && break
     fi
     sleep 10
