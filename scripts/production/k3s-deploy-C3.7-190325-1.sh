@@ -28,21 +28,17 @@ SKIP_SSH_CHECK="false"
 LOG_FILE="k3s_install_$(date +%Y%m%d-%H%M%S).log"
 
 # Version of Kube-VIP and K3S to deploy
-KVVERSION="v0.8.9"
-K3S_VERSION="v1.30.10+k3s1"
+K3S_VERSION="v1.30.13+k3s1"
 
 # Network Configuration
-MASTER1="192.168.56.21"
-MASTER2="192.168.56.22"
-MASTER3="192.168.56.23"
-WORKER1="192.168.56.24"
-WORKER2="192.168.56.25"
-# Nuevos nodos trabajadores
-WORKER3="192.168.56.26"
-WORKER4="192.168.56.27"
-WORKER5="192.168.56.28"
-VIP="192.168.56.50"
-LB_RANGE="192.168.56.60-192.168.56.80"
+MASTER1="192.168.1.21"
+MASTER2="192.168.1.22"
+MASTER3="192.168.1.23"
+WORKER1="192.168.1.25"   # k3s-worker-02
+WORKER2="192.168.1.13"   # k3s-worker-03
+WORKER3="192.168.1.27"   # k3s-worker-04
+VIP="192.168.1.50"
+LB_RANGE="192.168.1.60-192.168.1.80"
 
 # SSH Configuration
 USER="rwagner"
@@ -52,12 +48,9 @@ CONFIG_FILE=~/.ssh/config
 
 # Arrays de nodos
 MASTERS=("$MASTER2" "$MASTER3")
-# Array actualizado con todos los trabajadores
-WORKERS=("$WORKER1" "$WORKER2" "$WORKER3" "$WORKER4" "$WORKER5")
-# Array actualizado con todos los nodos
-ALL_NODES=("$MASTER1" "$MASTER2" "$MASTER3" "$WORKER1" "$WORKER2" "$WORKER3" "$WORKER4" "$WORKER5")
-# Array actualizado con todos excepto el primer maestro
-ALL_EXCEPT_MASTER1=("$MASTER2" "$MASTER3" "$WORKER1" "$WORKER2" "$WORKER3" "$WORKER4" "$WORKER5")
+WORKERS=("$WORKER1" "$WORKER2" "$WORKER3")
+ALL_NODES=("$MASTER1" "$MASTER2" "$MASTER3" "$WORKER1" "$WORKER2" "$WORKER3")
+ALL_EXCEPT_MASTER1=("$MASTER2" "$MASTER3" "$WORKER1" "$WORKER2" "$WORKER3")
 
 # Directories
 KUBE_CONFIG_DIR="$HOME/.kube"
@@ -128,7 +121,7 @@ log "Verificando prerrequisitos..."
 
 # Verificar conectividad SSH con los nodos
 if [ "$SKIP_SSH_CHECK" = "false" ]; then
-    log "Comprobando conectividad SSH con usuario $USER en los nodos 192.168.56.21-28..."
+    log "Comprobando conectividad SSH con usuario $USER en los nodos ${ALL_NODES[*]}..."
     check_ssh_connectivity
 else
     log "Omitiendo verificación de conectividad SSH por configuración."

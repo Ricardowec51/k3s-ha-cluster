@@ -37,16 +37,15 @@ K3S_VERSION="v1.30.13+k3s1"     # ✅ Última estable sin breaking changes
 METALLB_VERSION="v0.14.9"       # ✅ Compatible con K8s 1.30.x
 K3SUP_VERSION="0.13.8"          # ✅ Versión específica para reproducibilidad
 
-# Network Configuration (Ajustado para desarrollo)
-MASTER1="192.168.56.21"
-MASTER2="192.168.56.22"
-MASTER3="192.168.56.23"
-WORKER1="192.168.56.24"
-WORKER2="192.168.56.25"
-# Reducido para desarrollo - solo 3 workers
-WORKER3="192.168.56.26"
-VIP="192.168.56.50"
-LB_RANGE="192.168.56.60-192.168.56.70"  # Rango más pequeño para dev
+# Network Configuration
+MASTER1="192.168.1.21"
+MASTER2="192.168.1.22"
+MASTER3="192.168.1.23"
+WORKER1="192.168.1.25"   # k3s-worker-02
+WORKER2="192.168.1.13"   # k3s-worker-03
+WORKER3="192.168.1.27"   # k3s-worker-04
+VIP="192.168.1.50"
+LB_RANGE="192.168.1.60-192.168.1.70"
 
 # SSH Configuration
 USER="rwagner"
