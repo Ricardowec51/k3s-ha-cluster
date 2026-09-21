@@ -1,0 +1,106 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-daily
+  namespace: contactos
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-sa
+          securityContext:
+            fsGroup: 1001
+          restartPolicy: OnFailure
+          initContainers:
+          - name: fix-permissions
+            image: busybox
+            command: ["sh", "-c", "chmod 777 /backups"]
+            volumeMounts:
+            - mountPath: /backups
+              name: backup-storage
+          containers:
+          - name: backup
+            image: bitnami/kubectl:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              DATE=$(date +%Y%m%d_%H%M%S)
+              echo "[$(date)] Iniciando backup..."
+
+              PRIMARY=$(kubectl get pod -n contactos \
+                -l "cnpg.io/cluster=postgres-contactos,cnpg.io/instanceRole=primary" \
+                -o jsonpath='{.items[0].metadata.name}')
+
+              if [ -z "$PRIMARY" ]; then
+                echo "[$(date)] ERROR: No se encontró pod primary"
+                exit 1
+              fi
+
+              echo "[$(date)] Primary detectado: $PRIMARY"
+
+              kubectl exec "$PRIMARY" -n contactos -c postgres -- \
+                pg_dump -U postgres -d contactos --no-owner --no-acl | \
+                gzip > /backups/contactos_${DATE}.sql.gz
+
+              SIZE=$(stat -c%s /backups/contactos_${DATE}.sql.gz)
+              if [ "$SIZE" -lt 1000 ]; then
+                echo "[$(date)] ERROR: Backup sospechosamente pequeño (${SIZE} bytes) - eliminando"
+                rm /backups/contactos_${DATE}.sql.gz
+                exit 1
+              fi
+
+              echo "[$(date)] Backup creado: contactos_${DATE}.sql.gz ($(ls -lh /backups/contactos_${DATE}.sql.gz | awk '{print $5}'))"
+
+              # ─── Retención GFS ───────────────────────────────────────────
+              # Diario:   últimos 7 días
+              # Mensual:  último backup de cada mes anterior al actual
+              # Anual:    último backup de cada año anterior al actual
+              # ─────────────────────────────────────────────────────────────
+              CUTOFF=$(date -d "7 days ago" +%Y%m%d)
+              CURRENT_MONTH=$(date +%Y%m)
+              CURRENT_YEAR=$(date +%Y)
+
+              declare -A monthly_keep yearly_keep
+
+              for f in $(ls /backups/contactos_*.sql.gz 2>/dev/null | sort); do
+                fname=$(basename "$f")
+                fdate=$(echo "$fname" | grep -oE '[0-9]{8}' | head -1)
+                fmonth="${fdate:0:6}"
+                fyear="${fdate:0:4}"
+                [[ "$fmonth" != "$CURRENT_MONTH" ]] && monthly_keep[$fmonth]="$fname"
+                [[ "$fyear"  != "$CURRENT_YEAR"  ]] && yearly_keep[$fyear]="$fname"
+              done
+
+              for f in $(ls /backups/contactos_*.sql.gz 2>/dev/null | sort); do
+                fname=$(basename "$f")
+                fdate=$(echo "$fname" | grep -oE '[0-9]{8}' | head -1)
+                fmonth="${fdate:0:6}"
+                fyear="${fdate:0:4}"
+                keep=false
+                [[ ! "$fdate" < "$CUTOFF" ]] && keep=true
+                [[ "${monthly_keep[$fmonth]+isset}" ]] && [[ "${monthly_keep[$fmonth]}" == "$fname" ]] && keep=true
+                [[ "${yearly_keep[$fyear]+isset}"  ]] && [[ "${yearly_keep[$fyear]}"  == "$fname" ]] && keep=true
+                if [[ "$keep" == "false" ]]; then
+                  echo "[$(date)] Eliminando (retención): $fname"
+                  rm "$f"
+                fi
+              done
+
+              echo "[$(date)] Estado de backups:"
+              ls -lh /backups/*.sql.gz 2>/dev/null || echo "Sin backups"
+              echo "[$(date)] Backup completado exitosamente"
+            volumeMounts:
+            - mountPath: /backups
+              name: backup-storage
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: postgres-backups-truenas
