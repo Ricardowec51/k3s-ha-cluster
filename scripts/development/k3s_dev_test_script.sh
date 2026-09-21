@@ -45,7 +45,7 @@ WORKER1="192.168.1.25"   # k3s-worker-02
 WORKER2="192.168.1.13"   # k3s-worker-03
 WORKER3="192.168.1.27"   # k3s-worker-04
 VIP="192.168.1.50"
-LB_RANGE="192.168.1.60-192.168.1.70"
+LB_RANGE="192.168.1.29-192.168.1.70"
 
 # SSH Configuration
 USER="rwagner"
