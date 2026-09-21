@@ -1,145 +1,160 @@
-# K3s High Availability Cluster - Professional Automated Deployment
+# K3s HA Cluster — Homelab
 
-This repository provides a production-grade orchestration toolset to deploy and manage a **K3s High Availability (HA)** cluster. It uses `k3sup` for agentless installation, `kube-vip` for control-plane redundancy, and `MetalLB` for bare-metal load balancing.
-
----
-
-## 🏗️ General Architecture
-
-```mermaid
-graph TD
-    Start((Start)) --> F1[<b>Phase 1: Audit</b><br/>Usage tracking and logging]
-    F1 --> F2[<b>Phase 2: Security</b><br/>SSH Validation & Backup]
-    F2 --> F3[<b>Phase 3: Tooling</b><br/>k3sup & kubectl installation]
-    F3 --> F4[<b>Phase 4: Primary Node</b><br/>Master 1 Bootstrap]
-    F4 --> F5[<b>Phase 5: High Availability</b><br/>Kube-VIP Configuration]
-    F5 --> F6[<b>Phase 6: Scaling</b><br/>Joining Masters & Workers]
-    F6 --> F7[<b>Phase 7: External Network</b><br/>MetalLB Installation]
-    F7 --> F8[<b>Phase 8: Certification</b><br/>Nginx Deployment & Test]
-    F8 --> F9[<b>Phase 9: Final Audit</b><br/>MD Report Generation]
-    F9 --> End((Cluster Ready))
-
-    subgraph "Critical Validations"
-    F2 -.-> V1[Verify Kernel Modules]
-    F2 -.-> V2[SSH Key Permissions]
-    F2 -.-> V3[Backup & Rollback]
-    end
-
-    subgraph "Real-World Tests"
-    F8 -.-> T1[Check MetalLB IP]
-    F8 -.-> T2[HTTP 200 OK Test]
-    end
-```
+Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local `192.168.1.0/24`.
 
 ---
 
-## 🛠️ Detailed Script Documentation
+## Topología
 
-### 1. `k3s_installer_complete.sh` (Main Orchestrator)
-This is the core of the repository. It automates the entire lifecycle of the cluster setup.
+### Nodos
 
-*   **What it does:**
-    *   Validates local and remote environment prerequisites.
-    *   Balances the control plane across 3 Master nodes using `etcd`.
-    *   Implements **Kube-VIP** for a floating Virtual IP (Zero-Downtime API).
-    *   Joins Worker nodes with specific labels (`longhorn=true`, `worker=true`).
-    *   Configures **MetalLB** for automatic External IP assignment.
-    *   Performs an end-to-end test by deploying an Nginx server and verifying HTTP connectivity.
-    *   Generates a comprehensive Markdown report of the installation.
+| Nodo | IP | Rol | RAM | OS |
+|---|---|---|---|---|
+| k3s-master-01 | 192.168.1.21 | control-plane, etcd, master | 8 GB | Ubuntu 24.04.3 LTS |
+| k3s-master-02 | 192.168.1.22 | control-plane, etcd, master | 32 GB | Ubuntu 24.04.3 LTS |
+| k3s-master-03 | 192.168.1.23 | control-plane, etcd, master | 8 GB | Ubuntu 24.04.3 LTS |
+| k3s-worker-02 | 192.168.1.25 | worker | 32 GB | Ubuntu 24.04.3 LTS |
+| k3s-worker-03 | 192.168.1.13 | worker | 16 GB | Ubuntu 24.04.3 LTS |
+| k3s-worker-04 | 192.168.1.27 | worker | 32 GB | Ubuntu 24.04.3 LTS |
 
-*   **Pre-configuration Requirements:**
-    *   **SSH Keys**: You must have an SSH key (default `id_rsa`) in `~/.ssh/`.
-    *   **User Variables**: Edit the top of the script to set:
-        *   `USER`: The remote username (must have passwordless sudo).
-        *   `INTERFACE`: The network interface (e.g., `eth0`, `ens18`).
-        *   `MASTER_IPs` & `WORKER_IPs`: Static IPs for your VMs.
-        *   `VIP`: A free IP in your subnet for the Cluster API.
-        *   `LB_RANGE`: A reserved range for your exposed services.
+### Versiones
+
+| Componente | Versión |
+|---|---|
+| K3s | v1.30.13+k3s1 |
+| MetalLB | v0.14.9 |
 
 ---
 
-### 2. `scripts/utils/health-check.sh`
-A diagnostic utility to ensure the cluster is operating within normal parameters.
+## Red
 
-*   **What it does:**
-    *   Verifies node status (Ready/NotReady).
-    *   Checks the health of critical system pods in `kube-system` and `metallb-system`.
-    *   Lists active StorageClasses and PVCs.
-    *   Identifies LoadBalancer services and their assigned IPs.
+| Recurso | Valor |
+|---|---|
+| Red local | 192.168.1.0/24 |
+| API server | https://192.168.1.21:6443 |
+| MetalLB pool | 192.168.1.29 – 192.168.1.70 |
+| Registry privado | http://192.168.1.64:5000 |
 
-*   **Pre-configuration Requirements:**
-    *   Requires `kubectl` installed and a valid `~/.kube/config`.
-    *   Should be run after the cluster installation is complete.
+### IPs de servicios (LoadBalancer)
 
----
-
-### 3. `scripts/utils/backup-cluster.sh`
-A lightweight backup tool for disaster recovery and state auditing.
-
-*   **What it does:**
-    *   Creates a timestamped snapshot folder in `./backups/`.
-    *   Backs up the local `kubeconfig` file.
-    *   Exports the current state of all Nodes and Services to text files.
-
-*   **Pre-configuration Requirements:**
-    *   Requires `kubectl` access.
-    *   Ensure the script has write permissions in the directory where it's executed.
-
----
-
-### 4. `scripts/utils/monthly-maintenance.sh`
-Guides the monthly Proxmox host update/reboot cycle so that etcd never loses quorum and services stay up. Hosts are handled **one at a time**.
-
-*   **Subcommands:**
-    *   `status` — VM→host layout, node readiness, etcd health, Proxmox quorum, unhealthy pods.
-    *   `prepare <host> [--dry-run]` — pre-flight checks (all nodes Ready, etcd ok, no failing pods, Proxmox quorate, the *other* hosts up for at least `SOAK_MIN` minutes, host does not carry more than one master), CloudNativePG switchover if the primary lives on that host (its PDB would otherwise block the drain), then `cordon` + `drain` of the host's worker.
-    *   `restore <host>` — waits for the host's VMs to be `Ready`, `uncordon`s the worker and verifies etcd and pods before the next host is touched.
-
-*   **Workflow:** `prepare <host>` → update/reboot the host in Proxmox (manual) → `restore <host>` → wait `SOAK_MIN` minutes → next host.
-
-*   **Notes:**
-    *   `kubectl` falls back across the three masters, because the kubeconfig usually points at master-01, which goes down with its host.
-    *   With an even number of Proxmox votes online below the expected count (e.g. a dead node), taking one host down drops Proxmox quorum for the duration: running VMs keep running but nothing can be started or migrated. That is why quorum is only required in `prepare`.
-    *   Host list, master IPs and VMID→node mapping are variables at the top of the script.
+| IP | Servicio | Puerto |
+|---|---|---|
+| 192.168.1.29 | Rancher | 443 / 80 |
+| 192.168.1.30 | Uptime Kuma | 3001 |
+| 192.168.1.31 | Homepage | 80 |
+| 192.168.1.53 | contactos / admin-panel | 80 |
+| 192.168.1.54 | contactos / backend | 80 |
+| 192.168.1.55 | contactos / postgres | 5432 |
+| 192.168.1.56 | contactos / website | 80 |
+| 192.168.1.57 | Prometheus | 9090 |
+| 192.168.1.58 | Grafana | 80 |
+| 192.168.1.59 | factuscan / frontend | 80 |
+| 192.168.1.60 | contactos / pgAdmin | 80 |
+| 192.168.1.61 | factuscan / backend | 8000 |
+| 192.168.1.63 | Longhorn UI | 80 |
+| 192.168.1.64 | Registry privado | 5000 |
 
 ---
 
-## 📋 System Prerequisites (Preparation is Key)
+## Infraestructura instalada
 
-To ensure a successful deployment, your environment **must** meet these conditions:
+| Componente | Namespace | Descripción |
+|---|---|---|
+| MetalLB | metallb-system | Load balancer L2 — reemplaza kube-vip |
+| Longhorn | longhorn-system | Storage distribuido en workers |
+| democratic-csi | democratic-csi | iSCSI + NFS |
+| cert-manager | cert-manager | Gestión de certificados TLS |
+| CNPG | cnpg-system | CloudNativePG — operator para PostgreSQL |
+| Prometheus + Grafana | monitoring | Stack de monitoreo |
+| Uptime Kuma | monitoring-tools | Monitoreo de disponibilidad |
 
-1.  **OS Support**: Ubuntu 22.04 LTS or 24.04 LTS on all nodes.
-2.  **SSH Access**: 
-    ```bash
-    ssh-copy-id -i ~/.ssh/id_rsa.pub user@node-ip
-    ```
-3.  **Passwordless Sudo**: The user must be able to run `sudo` without being prompted for a password.
-    *   *Fix*: `echo "user ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/user`
-4.  **Network**:
-    *   Static IPs for all nodes.
-    *   Internet access for nodes to download K3s binaries and Docker images.
-5.  **Kernel Modules**: The script will attempt to load them, but ensure `overlay` and `br_netfilter` are not blacklisted.
+> **Rancher** y **Longhorn** se instalan por separado, no mediante estos scripts.
 
 ---
 
-## 🚀 Execution
+## Aplicaciones
+
+| Namespace | Componentes |
+|---|---|
+| contactos | backend, frontend, admin-panel, PostgreSQL (CNPG), pgAdmin, backup diario |
+| factuscan | backend, frontend |
+| homepage | Dashboard principal |
+| registry | Registro privado de contenedores |
+
+---
+
+## Acceso
+
+### Kubectl (desde MacBook Pro — máquina principal)
 
 ```bash
-# 1. Clone the repo
-git clone https://github.com/Ricardowec51/k3s-ha-cluster.git
+kubectl get nodes
+```
 
-# 2. Configure variables
-nano k3s_installer_complete.sh
+Contexto activo: `k3s-homelab` en `~/.kube/config`.
 
-# 3. Run the installer
-chmod +x k3s_installer_complete.sh
-./k3s_installer_complete.sh
+### SSH a los nodos
+
+```bash
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.21   # master-01
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.22   # master-02
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.23   # master-03
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.25   # worker-02
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.13   # worker-03
+ssh -i ~/.ssh/id_rsa rwagner@192.168.1.27   # worker-04
+```
+
+### Registry privado
+
+Todos los nodos tienen `/etc/rancher/k3s/registries.yaml` configurado para HTTP.
+
+```bash
+# Push desde Mac
+docker tag mi-imagen 192.168.1.64:5000/mi-imagen
+docker push 192.168.1.64:5000/mi-imagen
+```
+
+```yaml
+# En manifiestos Kubernetes
+image: 192.168.1.64:5000/mi-imagen
 ```
 
 ---
 
-## 📈 Tracking and Logs
-*   **Usage Logs**: `~/.k3s_usage_tracking.log` (Internal use).
-*   **Deployment Logs**: `k3s_dev_test_[timestamp].log`.
-*   **Debug Logs**: `k3s_debug_[timestamp].log`.
-*   **Installation Report**: `k3s_installation_report_[timestamp].md`.
+## Scripts de deployment
+
+| Script | Uso |
+|---|---|
+| `scripts/production/k3s-deploy-C3.7-190325-1.sh` | Deploy completo en producción |
+| `scripts/development/k3s_dev_test_script.sh` | Deploy con validaciones extendidas para pruebas |
+
+### Requisitos previos
+
+- SSH key `~/.ssh/id_rsa` autorizada en todos los nodos
+- Usuario `rwagner` con `sudo` sin contraseña en los nodos Linux
+- `k3sup` y `kubectl` instalados en la máquina de control
+
+### Variables principales (ambos scripts)
+
+```bash
+MASTER1="192.168.1.21"
+MASTER2="192.168.1.22"
+MASTER3="192.168.1.23"
+WORKER1="192.168.1.25"   # k3s-worker-02
+WORKER2="192.168.1.13"   # k3s-worker-03
+WORKER3="192.168.1.27"   # k3s-worker-04
+VIP="192.168.1.50"
+LB_RANGE="192.168.1.29-192.168.1.70"
+K3S_VERSION="v1.30.13+k3s1"
+```
+
+---
+
+## Historial de cambios
+
+| Fecha | Cambio |
+|---|---|
+| 2026-09-19 | Reducción de workers (5 → 3), reparación de etcd, tuning térmico de nodos |
+| 2026-09-19 | Instalación del registry privado (`192.168.1.64:5000`) |
+| 2026-09-20 | Migración de máquina de trabajo: Mac Mini M4 → MacBook Pro M3 |
+| 2026-09-21 | Actualización de scripts e IPs reales, `hosts.ini` al repo, registry configurado en todos los nodos |
