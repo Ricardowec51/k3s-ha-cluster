@@ -33,6 +33,14 @@ spec:
               set -euo pipefail
 
               DATE=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="/backups/contactos_${DATE}.sql.gz"
+
+              cleanup_on_error() {
+                echo "[$(date)] ERROR: limpiando archivo incompleto..."
+                rm -f "$BACKUP_FILE"
+              }
+              trap cleanup_on_error ERR
+
               echo "[$(date)] Iniciando backup..."
 
               PRIMARY=$(kubectl get pod -n contactos \
@@ -48,16 +56,16 @@ spec:
 
               kubectl exec "$PRIMARY" -n contactos -c postgres -- \
                 pg_dump -U postgres -d contactos --no-owner --no-acl | \
-                gzip > /backups/contactos_${DATE}.sql.gz
+                gzip > "$BACKUP_FILE"
 
-              SIZE=$(stat -c%s /backups/contactos_${DATE}.sql.gz)
+              SIZE=$(stat -c%s "$BACKUP_FILE")
               if [ "$SIZE" -lt 1000 ]; then
-                echo "[$(date)] ERROR: Backup sospechosamente pequeño (${SIZE} bytes) - eliminando"
-                rm /backups/contactos_${DATE}.sql.gz
+                echo "[$(date)] ERROR: Backup sospechosamente pequeño (${SIZE} bytes)"
                 exit 1
               fi
 
-              echo "[$(date)] Backup creado: contactos_${DATE}.sql.gz ($(ls -lh /backups/contactos_${DATE}.sql.gz | awk '{print $5}'))"
+              trap - ERR
+              echo "[$(date)] Backup creado: contactos_${DATE}.sql.gz ($(ls -lh "$BACKUP_FILE" | awk '{print $5}'))"
 
               # ─── Retención GFS ───────────────────────────────────────────
               # Diario:   últimos 7 días
