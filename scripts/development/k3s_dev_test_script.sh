@@ -32,7 +32,6 @@ BACKUP_BEFORE_CHANGES="true"
 EXTENSIVE_VALIDATION="true"
 
 # Versiones compatibles y probadas (basadas en análisis de compatibilidad)
-KVVERSION="v0.8.6"              # ✅ CRÍTICO: Evita bug de v0.8.9
 K3S_VERSION="v1.30.13+k3s1"     # ✅ Última estable sin breaking changes
 METALLB_VERSION="v0.14.9"       # ✅ Compatible con K8s 1.30.x
 K3SUP_VERSION="0.13.8"          # ✅ Versión específica para reproducibilidad
@@ -70,10 +69,9 @@ DEBUG_LOG="k3s_debug_$(date +%Y%m%d-%H%M%S).log"
 # Backup directory
 BACKUP_DIR="./k3s-backup-$(date +%Y%m%d-%H%M%S)"
 
-# URLs específicas para las versiones compatibles
-METALLB_NAMESPACE_URL="https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-namespace.yaml"
-METALLB_NATIVE_URL="https://raw.githubusercontent.com/metallb/metallb/v0.14.9/config/manifests/metallb-native.yaml"
-KUBEVIP_RBAC_URL="https://kube-vip.io/manifests/rbac.yaml"
+# Registry privado
+REGISTRY_IP="192.168.1.64"
+REGISTRY_PORT="5000"
 
 #############################################
 #            ENHANCED LOGGING               #
@@ -126,21 +124,16 @@ debug_msg() { log_structured "DEBUG" "$1"; }
 # Función de validación de compatibilidad de versiones
 validate_versions() {
     log_structured "INFO" "Validando compatibilidad de versiones..."
-    
-    # Validar que no estamos usando la versión buggy de kube-vip
-    if [[ "$KVVERSION" == "v0.8.9" ]]; then
-        error_msg "❌ CRÍTICO: Kube-VIP v0.8.9 tiene bug crítico con IPVS. Usar v0.8.6"
-    fi
-    
+
     # Validar versiones de K3s
     local k3s_major=$(echo "$K3S_VERSION" | sed 's/v//' | cut -d. -f1)
     local k3s_minor=$(echo "$K3S_VERSION" | sed 's/v//' | cut -d. -f2)
-    
+
     if [[ $k3s_major -eq 1 && $k3s_minor -ge 32 ]]; then
         warning_msg "⚠️  K3s v1.32+ detectado. Contendrá Containerd 2.0 y breaking changes"
         warning_msg "⚠️  Recomendado: usar v1.30.13+k3s1 para evitar breaking changes"
     fi
-    
+
     success_msg "✅ Validación de versiones completada"
 }
 
@@ -418,84 +411,6 @@ bootstrap_first_master() {
     fi
 }
 
-# Función para configurar kube-vip con versión específica
-setup_kubevip() {
-    log_structured "INFO" "Configurando kube-vip versión $KVVERSION..."
-    
-    # Esperar a que el servidor API esté disponible
-    log_structured "INFO" "Esperando disponibilidad del servidor API..."
-    local api_ready=false
-    local attempts=0
-    local max_attempts=12  # 2 minutos
-    
-    while [[ $attempts -lt $max_attempts ]]; do
-        if kubectl get nodes &>/dev/null; then
-            api_ready=true
-            break
-        fi
-        debug_msg "API no disponible, intento $((attempts + 1))/$max_attempts"
-        sleep 10
-        ((attempts++))
-    done
-    
-    if [[ "$api_ready" == "false" ]]; then
-        error_msg "❌ Timeout esperando disponibilidad del API server"
-    fi
-    
-    success_msg "✅ API server disponible"
-    
-    # Aplicar RBAC de kube-vip
-    log_structured "INFO" "Aplicando RBAC de kube-vip..."
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo curl -s $KUBEVIP_RBAC_URL -o /var/lib/rancher/k3s/server/manifests/kube-vip-rbac.yaml"; then
-        debug_msg "✅ RBAC de kube-vip aplicado"
-    else
-        error_msg "❌ Error aplicando RBAC de kube-vip"
-    fi
-    
-    # Descargar y configurar manifest de kube-vip
-    log_structured "INFO" "Configurando manifest de kube-vip..."
-    curl -sO https://raw.githubusercontent.com/JamesTurland/JimsGarage/main/Kubernetes/K3S-Deploy/kube-vip
-    
-    # Reemplazar variables en el manifest
-    sed -e "s/\$interface/$INTERFACE/g" \
-        -e "s/\$vip/$VIP/g" \
-        -e "s/plndr\/kube-vip:.*$/plndr\/kube-vip:$KVVERSION/g" \
-        kube-vip > "$HOME/kube-vip.yaml"
-    
-    debug_msg "Variables reemplazadas en kube-vip.yaml:"
-    debug_msg "- Interface: $INTERFACE"
-    debug_msg "- VIP: $VIP"
-    debug_msg "- Versión: $KVVERSION"
-    
-    # Copiar kube-vip.yaml al master1
-    if scp -i "$HOME/.ssh/$CERT_NAME" "$HOME/kube-vip.yaml" "$USER@$MASTER1:~/kube-vip.yaml"; then
-        debug_msg "✅ kube-vip.yaml copiado al master1"
-    else
-        error_msg "❌ Error copiando kube-vip.yaml"
-    fi
-    
-    # Mover al directorio de manifests
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo mkdir -p $MANIFEST_DIR && sudo mv kube-vip.yaml $MANIFEST_DIR/kube-vip.yaml"; then
-        success_msg "✅ kube-vip configurado correctamente"
-    else
-        error_msg "❌ Error moviendo kube-vip.yaml al directorio de manifests"
-    fi
-    
-    # Esperar a que kube-vip se inicie
-    log_structured "INFO" "Esperando inicio de kube-vip..."
-    sleep 45
-    
-    # Verificar que kube-vip está ejecutándose
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo kubectl get pods -n kube-system --kubeconfig /etc/rancher/k3s/k3s.yaml | grep -q kube-vip"; then
-        success_msg "✅ kube-vip está ejecutándose"
-    else
-        warning_msg "⚠️  kube-vip pods no detectados, continuando..."
-    fi
-}
-
 # Función para unir nodos maestros adicionales
 join_additional_masters() {
     log_structured "INFO" "Uniendo nodos maestros adicionales..."
@@ -592,62 +507,18 @@ join_worker_nodes() {
 
 # Función para instalar MetalLB con versión específica
 install_metallb() {
-    log_structured "INFO" "Instalando MetalLB versión $METALLB_VERSION..."
-    
-    # Aplicar namespace de MetalLB
-    log_structured "INFO" "Aplicando namespace de MetalLB..."
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo curl -s $METALLB_NAMESPACE_URL -o /var/lib/rancher/k3s/server/manifests/metallb-namespace.yaml"; then
-        debug_msg "✅ Namespace de MetalLB aplicado"
-    else
-        error_msg "❌ Error aplicando namespace de MetalLB"
-    fi
-    
-    # Aplicar manifests nativos de MetalLB
-    log_structured "INFO" "Aplicando manifests nativos de MetalLB..."
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo curl -s $METALLB_NATIVE_URL -o /var/lib/rancher/k3s/server/manifests/metallb-native.yaml"; then
-        debug_msg "✅ Manifests nativos de MetalLB aplicados"
-    else
-        error_msg "❌ Error aplicando manifests nativos de MetalLB"
-    fi
-    
-    # Esperar a que MetalLB se instale
-    log_structured "INFO" "Esperando instalación de MetalLB..."
-    sleep 45
-    
-    # Verificar que los pods de MetalLB están ejecutándose
-    local metallb_ready=false
-    local attempts=0
-    local max_attempts=12
-    
-    while [[ $attempts -lt $max_attempts ]]; do
-        local running_pods=$(ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-            "sudo kubectl get pods -n metallb-system --kubeconfig /etc/rancher/k3s/k3s.yaml --no-headers 2>/dev/null | grep -c Running" || echo "0")
-        
-        if [[ $running_pods -ge 2 ]]; then  # Controller + al menos un speaker
-            metallb_ready=true
-            break
-        fi
-        
-        debug_msg "MetalLB pods ejecutándose: $running_pods, intento $((attempts + 1))/$max_attempts"
-        sleep 10
-        ((attempts++))
-    done
-    
-    if [[ "$metallb_ready" == "true" ]]; then
-        success_msg "✅ MetalLB instalado y ejecutándose correctamente"
-    else
-        warning_msg "⚠️  MetalLB pods no completamente listos, continuando..."
-    fi
-}
+    log_structured "INFO" "Instalando MetalLB $METALLB_VERSION..."
 
-# Función para configurar pool de direcciones de MetalLB
-configure_metallb_pool() {
-    log_structured "INFO" "Configurando pool de direcciones IP para MetalLB..."
-    
-    # Crear configuración de pool de IPs
-    cat > "$HOME/metallb-ippool.yaml" << EOF
+    kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/$METALLB_VERSION/config/manifests/metallb-native.yaml"
+
+    log_structured "INFO" "Esperando que MetalLB esté listo..."
+    kubectl wait --namespace metallb-system \
+        --for=condition=ready pod \
+        --selector=app=metallb \
+        --timeout=120s
+
+    # Configurar IP pool y L2Advertisement
+    cat <<EOF | kubectl apply -f -
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
@@ -655,7 +526,7 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-  - $LB_RANGE
+    - $LB_RANGE
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
@@ -664,27 +535,35 @@ metadata:
   namespace: metallb-system
 spec:
   ipAddressPools:
-  - dev-pool
+    - dev-pool
 EOF
-    
-    debug_msg "Pool de IPs configurado: $LB_RANGE"
-    
-    # Copiar configuración al master1
-    if scp -i "$HOME/.ssh/$CERT_NAME" "$HOME/metallb-ippool.yaml" "$USER@$MASTER1:~/metallb-ippool.yaml"; then
-        debug_msg "✅ Configuración copiada al master1"
-    else
-        error_msg "❌ Error copiando configuración de MetalLB"
-    fi
-    
-    # Aplicar configuración
-    if ssh -o ConnectTimeout=30 "$USER@$MASTER1" -i "/home/$USER/.ssh/$CERT_NAME" \
-        "sudo mv metallb-ippool.yaml /var/lib/rancher/k3s/server/manifests/metallb-ippool.yaml"; then
-        success_msg "✅ Pool de direcciones IP configurado correctamente"
-    else
-        error_msg "❌ Error aplicando configuración de pool IP"
-    fi
-    
-    sleep 15  # Esperar a que se aplique la configuración
+
+    success_msg "✅ MetalLB instalado y configurado con rango $LB_RANGE"
+}
+
+# Función para configurar registry privado en todos los nodos
+configure_registry() {
+    log_structured "INFO" "Configurando registry privado en todos los nodos..."
+
+    for node in "${ALL_NODES[@]}"; do
+        debug_msg "Configurando registry en $node..."
+        if ssh -o ConnectTimeout=30 "$USER@$node" -i "$HOME/.ssh/$CERT_NAME" "
+            sudo mkdir -p /etc/rancher/k3s
+            cat <<REGEOF | sudo tee /etc/rancher/k3s/registries.yaml > /dev/null
+mirrors:
+  \"$REGISTRY_IP:$REGISTRY_PORT\":
+    endpoint:
+      - \"http://$REGISTRY_IP:$REGISTRY_PORT\"
+REGEOF
+            sudo systemctl restart k3s 2>/dev/null || sudo systemctl restart k3s-agent 2>/dev/null
+        "; then
+            debug_msg "✅ Registry configurado en $node"
+        else
+            warning_msg "⚠️  Error configurando registry en $node"
+        fi
+    done
+
+    success_msg "✅ Registry privado configurado en todos los nodos ($REGISTRY_IP:$REGISTRY_PORT)"
 }
 
 #############################################
@@ -954,7 +833,6 @@ generate_installation_report() {
 
 ## Versiones Utilizadas
 - **K3s:** $K3S_VERSION
-- **Kube-VIP:** $KVVERSION
 - **MetalLB:** $METALLB_VERSION
 - **k3sup:** $K3SUP_VERSION
 
@@ -987,7 +865,8 @@ $(kubectl get pods --all-namespaces 2>/dev/null || echo "Error obteniendo inform
 ## Acceso al Cluster
 - **Kubeconfig:** $KUBE_CONFIG_DIR/config
 - **Contexto:** k3s-ha-dev
-- **API Server:** https://$VIP:6443
+- **API Server:** https://$MASTER1:6443
+- **Registry:** http://$REGISTRY_IP:$REGISTRY_PORT
 
 ## Archivos de Log
 - **Log Principal:** $LOG_FILE
@@ -1014,7 +893,7 @@ EOF
 main() {
     # Banner de inicio
     log_structured "INFO" "🚀 Iniciando instalación K3s HA - Modo Desarrollo"
-    log_structured "INFO" "📋 Versiones: K3s $K3S_VERSION | Kube-VIP $KVVERSION | MetalLB $METALLB_VERSION"
+    log_structured "INFO" "📋 Versiones: K3s $K3S_VERSION | MetalLB $METALLB_VERSION"
     
     # Inicializar logs
     echo "K3s HA Development Installation - Started at $(date)" > "$LOG_FILE"
@@ -1039,14 +918,13 @@ main() {
     # Fase 3: Configuración del cluster
     log_structured "INFO" "⚙️  FASE 3: Configuración del Cluster"
     bootstrap_first_master
-    setup_kubevip
     join_additional_masters
     join_worker_nodes
     
     # Fase 4: Configuración de red
     log_structured "INFO" "🌐 FASE 4: Configuración de Red"
     install_metallb
-    configure_metallb_pool
+    configure_registry
     
     # Fase 5: Esperar y validar
     log_structured "INFO" "⏳ FASE 5: Validación y Espera"
@@ -1064,8 +942,9 @@ main() {
     
     # Mensaje final
     success_msg "🎉 ¡Instalación K3s HA completada exitosamente!"
-    success_msg "🔗 API Kubernetes: https://$VIP:6443"
+    success_msg "🔗 API Kubernetes: https://$MASTER1:6443"
     success_msg "📁 Kubeconfig: $KUBE_CONFIG_DIR/config"
+    success_msg "🗂️  Registry privado: http://$REGISTRY_IP:$REGISTRY_PORT"
     success_msg "📝 Logs: $LOG_FILE"
     
     if [[ "$BACKUP_BEFORE_CHANGES" == "true" ]]; then
