@@ -2,6 +2,8 @@
 
 Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local `192.168.1.0/24`.
 
+> **Estado:** Producción estable — última revisión completa 2026-09-21
+
 ---
 
 ## Topología
@@ -17,12 +19,16 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 | k3s-worker-03 | 192.168.1.13 | worker | 16 GB | Ubuntu 24.04.3 LTS |
 | k3s-worker-04 | 192.168.1.27 | worker | 32 GB | Ubuntu 24.04.3 LTS |
 
+> Masters 01 y 03 tienen 8 GB RAM. Uso observado: 65-75%. Funcional pero ajustado — candidatos a ampliar si se agregan workloads.
+
 ### Versiones
 
 | Componente | Versión |
 |---|---|
 | K3s | v1.30.13+k3s1 |
 | MetalLB | v0.14.9 |
+| PostgreSQL (CNPG) | 17.2 |
+| kube-prometheus-stack | 81.2.2 |
 
 ---
 
@@ -34,6 +40,7 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 | API server | https://192.168.1.21:6443 |
 | MetalLB pool | 192.168.1.29 – 192.168.1.70 |
 | Registry privado | http://192.168.1.64:5000 |
+| Máquina de control | MacBook Pro M3 — 192.168.1.8 |
 
 ### IPs de servicios (LoadBalancer)
 
@@ -44,14 +51,13 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 | 192.168.1.31 | Homepage | 80 |
 | 192.168.1.53 | contactos / admin-panel | 80 |
 | 192.168.1.54 | contactos / backend | 80 |
-| 192.168.1.55 | contactos / postgres | 5432 |
+| 192.168.1.55 | contactos / postgres (CNPG) | 5432 |
 | 192.168.1.56 | contactos / website | 80 |
 | 192.168.1.57 | Prometheus | 9090 |
 | 192.168.1.58 | Grafana | 80 |
 | 192.168.1.59 | factuscan / frontend | 80 |
 | 192.168.1.60 | contactos / pgAdmin | 80 |
 | 192.168.1.61 | factuscan / backend | 8000 |
-| 192.168.1.63 | Longhorn UI | 80 |
 | 192.168.1.64 | Registry privado | 5000 |
 
 ---
@@ -60,26 +66,113 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 
 | Componente | Namespace | Descripción |
 |---|---|---|
-| MetalLB | metallb-system | Load balancer L2 — reemplaza kube-vip |
-| Longhorn | longhorn-system | Storage distribuido en workers |
-| democratic-csi | democratic-csi | iSCSI + NFS |
+| MetalLB | metallb-system | Load balancer L2 |
+| democratic-csi | democratic-csi | Storage iSCSI + NFS sobre TrueNAS (192.168.1.100) |
 | cert-manager | cert-manager | Gestión de certificados TLS |
 | CNPG | cnpg-system | CloudNativePG — operator para PostgreSQL |
-| Prometheus + Grafana | monitoring | Stack de monitoreo |
+| Prometheus + Grafana | monitoring | Stack de monitoreo (kube-prometheus-stack) |
 | Uptime Kuma | monitoring-tools | Monitoreo de disponibilidad |
+| Rancher | cattle-system | Gestión del cluster — instalado por separado |
 
-> **Rancher** y **Longhorn** se instalan por separado, no mediante estos scripts.
+> **Longhorn fue desinstalado el 2026-09-21** — no tenía volúmenes activos. Todo el storage usa democratic-csi sobre TrueNAS.
+
+---
+
+## Storage (TrueNAS — 192.168.1.100)
+
+| PVC | Namespace | Tamaño | Tipo | Uso |
+|---|---|---|---|---|
+| postgres-contactos-1 | contactos | 50 Gi | iSCSI | BD primaria CNPG |
+| postgres-contactos-2 | contactos | 50 Gi | iSCSI | Réplica CNPG |
+| postgres-backups-truenas | contactos | 20 Gi | NFS | Backups diarios |
+| pgadmin-data-truenas | contactos | 1 Gi | NFS | pgAdmin |
+| factuscan-storage-iscsi | factuscan | 10 Gi | iSCSI | App factuscan |
+| prometheus-db | monitoring | 20 Gi | iSCSI | Métricas Prometheus |
+| uptime-kuma-pvc-iscsi | monitoring-tools | 4 Gi | iSCSI | Uptime Kuma |
+| registry-data | registry | 30 Gi | iSCSI | Imágenes Docker |
+
+**Total: 185 Gi**
+
+### Storage classes
+
+| Clase | Provisioner | Reclaim |
+|---|---|---|
+| truenas-iscsi | org.democratic-csi.iscsi | Retain |
+| truenas-nfs | org.democratic-csi.nfs | Retain |
+| local-path (default) | rancher.io/local-path | Delete |
+
+> La política `Retain` significa que al borrar un PVC el PV queda en estado `Released` y **ocupa espacio en TrueNAS hasta que se borre manualmente**. Revisar PVs Released periódicamente con `kubectl get pv | grep Released`.
 
 ---
 
 ## Aplicaciones
 
-| Namespace | Componentes |
-|---|---|
-| contactos | backend, frontend, admin-panel, PostgreSQL (CNPG), pgAdmin, backup diario |
-| factuscan | backend, frontend |
-| homepage | Dashboard principal |
-| registry | Registro privado de contenedores |
+### contactos
+
+| Componente | Réplicas | IP | Puerto |
+|---|---|---|---|
+| website | 2 | 192.168.1.56 | 80 |
+| backend | 2 | 192.168.1.54 | 80 |
+| admin-panel | 2 | 192.168.1.53 | 80 |
+| pgAdmin | 1 | 192.168.1.60 | 80 |
+| PostgreSQL (CNPG) | 2 (1 primary + 1 replica) | 192.168.1.55 | 5432 |
+
+BD: cluster CNPG `postgres-contactos` — primary en `postgres-contactos-1`, réplica en `postgres-contactos-2`.
+
+### factuscan
+
+| Componente | Réplicas | IP | Puerto |
+|---|---|---|---|
+| frontend | 2 | 192.168.1.59 | 80 |
+| backend | 1 | 192.168.1.61 | 8000 |
+
+> `factuscan` usa la misma BD CNPG que `contactos` vía servicio `factuscan-db` → `192.168.1.55:5432`.
+
+### Otros
+
+| App | Namespace | IP | Puerto |
+|---|---|---|---|
+| Homepage | homepage | 192.168.1.31 | 80 |
+| Registry | registry | 192.168.1.64 | 5000 |
+
+**Imágenes en registry:** `admin-panel`, `backend-contacto`, `factuscan-backend`, `factuscan-frontend`, `website-emprendedores`
+
+---
+
+## Backups
+
+### PostgreSQL (contactos)
+
+- **Schedule:** diario a las 02:00 UTC
+- **Destino:** TrueNAS NFS → `/mnt/pool_1/k8s-nfs/pvc-8efee457.../`
+- **Retención GFS:**
+  - Diario: últimos 7 días
+  - Mensual: último backup de cada mes cerrado
+  - Anual: último backup de cada año cerrado
+- **Manifiesto:** `configs/contactos/postgres-backup-cronjob.yaml`
+- **Verificar:** `kubectl logs -n contactos job/<último-job>`
+
+```bash
+# Ver último job
+kubectl get jobs -n contactos --sort-by=.metadata.creationTimestamp | tail -3
+```
+
+---
+
+## Certificados
+
+| Certificado | Gestión | Vence | Renovación |
+|---|---|---|---|
+| Rancher (tls-rancher-ingress) | cert-manager | 2026-11-06 | Auto — 2026-10-07 |
+| CNPG CA / server / replication | CNPG interno | 2026-10-24 | Auto |
+
+---
+
+## Monitoreo
+
+- **Prometheus:** `http://192.168.1.57:9090` — retención 30 días, storage persistente en TrueNAS
+- **Grafana:** `http://192.168.1.58` — credenciales: `admin / admin`
+- **Uptime Kuma:** `http://192.168.1.30:3001`
 
 ---
 
@@ -106,7 +199,7 @@ ssh -i ~/.ssh/id_rsa rwagner@192.168.1.27   # worker-04
 
 ### Registry privado
 
-Todos los nodos tienen `/etc/rancher/k3s/registries.yaml` configurado para HTTP.
+Todos los nodos tienen `/etc/rancher/k3s/registries.yaml` configurado para HTTP sin autenticación (red local).
 
 ```bash
 # Push desde Mac
@@ -150,6 +243,16 @@ K3S_VERSION="v1.30.13+k3s1"
 
 ---
 
+## Manifiestos en repo
+
+| Archivo | Descripción |
+|---|---|
+| `hosts.ini` | Inventario Ansible de todos los nodos |
+| `configs/contactos/postgres-backup-cronjob.yaml` | CronJob de backup PostgreSQL con retención GFS |
+| `configs/metallb/` | Configuración MetalLB |
+
+---
+
 ## Historial de cambios
 
 | Fecha | Cambio |
@@ -158,3 +261,8 @@ K3S_VERSION="v1.30.13+k3s1"
 | 2026-09-19 | Instalación del registry privado (`192.168.1.64:5000`) |
 | 2026-09-20 | Migración de máquina de trabajo: Mac Mini M4 → MacBook Pro M3 |
 | 2026-09-21 | Actualización de scripts e IPs reales, `hosts.ini` al repo, registry configurado en todos los nodos |
+| 2026-09-21 | Desinstalación de Longhorn (sin uso) — liberados ~1 TB en workers |
+| 2026-09-21 | Prometheus: PVC 20Gi en TrueNAS + retención 30d (antes emptyDir + 1d) |
+| 2026-09-21 | Backup PostgreSQL: retención GFS (7d diario + mensual + anual) + fix trap ERR |
+| 2026-09-21 | Limpieza general: ~60 replicasets viejos, 3 jobs fallidos, 114Gi PVs huérfanos eliminados |
+| 2026-09-21 | Scripts de deploy: eliminado kube-vip, MetalLB por kubectl directo, registry en todos los nodos |
