@@ -221,6 +221,15 @@ image: 192.168.1.64:5000/mi-imagen
 | `scripts/production/k3s-deploy-C3.7-190325-1.sh` | Deploy completo en producción |
 | `scripts/development/k3s_dev_test_script.sh` | Deploy con validaciones extendidas para pruebas |
 
+### Scripts de operación (`scripts/utils/`)
+
+| Script | Uso |
+|---|---|
+| `k3s-energia.sh` | Apagado y arranque ordenado de todo (cluster, hosts Proxmox, TrueNAS) con WOL y reparaciones post-arranque. Runbook: [`docs/energia-y-arranque.md`](docs/energia-y-arranque.md) |
+| `monthly-maintenance.sh` | Mantenimiento mensual de hosts Proxmox, uno a la vez, sin perder quórum de etcd |
+| `health-check.sh` | Chequeo de salud del cluster |
+| `backup-cluster.sh` | Backup del cluster |
+
 ### Requisitos previos
 
 - SSH key `~/.ssh/id_rsa` autorizada en todos los nodos
@@ -266,3 +275,4 @@ K3S_VERSION="v1.30.13+k3s1"
 | 2026-09-21 | Backup PostgreSQL: retención GFS (7d diario + mensual + anual) + fix trap ERR |
 | 2026-09-21 | Limpieza general: ~60 replicasets viejos, 3 jobs fallidos, 114Gi PVs huérfanos eliminados |
 | 2026-09-21 | Scripts de deploy: eliminado kube-vip, MetalLB por kubectl directo, registry en todos los nodos |
+| 2026-10-18 | Recuperación tras corte de luz del 17-oct ([postmortem](docs/energia-y-arranque.md#postmortem-corte-de-luz-del-2026-10-17)). Nuevo `k3s-energia.sh` (apagado/arranque ordenado + WOL); hosts Proxmox esperan a TrueNAS antes de arrancar VMs; puerto 1G de TrueNAS cableado solo para WOL |
