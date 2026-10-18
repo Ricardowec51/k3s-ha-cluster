@@ -275,5 +275,6 @@ K3S_VERSION="v1.30.13+k3s1"
 | 2026-09-21 | Backup PostgreSQL: retención GFS (7d diario + mensual + anual) + fix trap ERR |
 | 2026-09-21 | Limpieza general: ~60 replicasets viejos, 3 jobs fallidos, 114Gi PVs huérfanos eliminados |
 | 2026-09-21 | Scripts de deploy: eliminado kube-vip, MetalLB por kubectl directo, registry en todos los nodos |
+| 2026-10-18 | Widget Grafana de Homepage: `homepage-secrets` tenía una contraseña vieja (401) → se copiaron `admin-user`/`admin-password` de `monitoring/monitoring-grafana`. Si se rota la contraseña de Grafana, repetir la copia y reiniciar Homepage |
 | 2026-10-18 | Uptime Kuma movido a `.33`; `.30` excluida del pool MetalLB (`dev-pool` = `.29` + `.31-.70`); dashboard Homepage actualizado (3 nodos PVE, sin Longhorn, + Forgejo, IPs de HA y NPM corregidas); fix 403 de `contacto.js` en el sitio (imagen `website-emprendedores:v2.1`) |
 | 2026-10-18 | Recuperación tras corte de luz del 17-oct ([postmortem](docs/energia-y-arranque.md#postmortem-corte-de-luz-del-2026-10-17)). Nuevo `k3s-energia.sh` (apagado/arranque ordenado + WOL); hosts Proxmox esperan a TrueNAS antes de arrancar VMs; puerto 1G de TrueNAS cableado solo para WOL |
