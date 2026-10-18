@@ -46,8 +46,8 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 
 | IP | Servicio | Puerto |
 |---|---|---|
-| 192.168.1.29 | Rancher | 443 / 80 |
-| 192.168.1.30 | Uptime Kuma | 3001 |
+| 192.168.1.29 | Rancher ⚠️ no accesible desde la LAN: la IP la usa un monitor Sense (pendiente mover) | 443 / 80 |
+| 192.168.1.33 | Uptime Kuma (fijada con `metallb.io/loadBalancerIPs`; antes .30, que usa un dispositivo Ring) | 3001 |
 | 192.168.1.31 | Homepage | 80 |
 | 192.168.1.53 | contactos / admin-panel | 80 |
 | 192.168.1.54 | contactos / backend | 80 |
@@ -172,7 +172,7 @@ kubectl get jobs -n contactos --sort-by=.metadata.creationTimestamp | tail -3
 
 - **Prometheus:** `http://192.168.1.57:9090` — retención 30 días, storage persistente en TrueNAS
 - **Grafana:** `http://192.168.1.58` — credenciales: `admin / admin`
-- **Uptime Kuma:** `http://192.168.1.30:3001`
+- **Uptime Kuma:** `http://192.168.1.33:3001`
 
 ---
 
@@ -275,4 +275,5 @@ K3S_VERSION="v1.30.13+k3s1"
 | 2026-09-21 | Backup PostgreSQL: retención GFS (7d diario + mensual + anual) + fix trap ERR |
 | 2026-09-21 | Limpieza general: ~60 replicasets viejos, 3 jobs fallidos, 114Gi PVs huérfanos eliminados |
 | 2026-09-21 | Scripts de deploy: eliminado kube-vip, MetalLB por kubectl directo, registry en todos los nodos |
+| 2026-10-18 | Uptime Kuma movido a `.33`; `.30` excluida del pool MetalLB (`dev-pool` = `.29` + `.31-.70`); dashboard Homepage actualizado (3 nodos PVE, sin Longhorn, + Forgejo, IPs de HA y NPM corregidas); fix 403 de `contacto.js` en el sitio (imagen `website-emprendedores:v2.1`) |
 | 2026-10-18 | Recuperación tras corte de luz del 17-oct ([postmortem](docs/energia-y-arranque.md#postmortem-corte-de-luz-del-2026-10-17)). Nuevo `k3s-energia.sh` (apagado/arranque ordenado + WOL); hosts Proxmox esperan a TrueNAS antes de arrancar VMs; puerto 1G de TrueNAS cableado solo para WOL |

@@ -144,9 +144,11 @@ Todas estas reparaciones quedaron automatizadas en los pasos 7–10 de `arrancar
 
 ## Problemas conocidos (no relacionados con el corte)
 
-- **Rancher (`.29`) y uptime-kuma (`.30`)** no son accesibles por su IP de LoadBalancer:
-  esas IPs las usan legítimamente un monitor Sense y un dispositivo Ring. Solución
-  pendiente: asignarles otras IPs del pool de MetalLB (`192.168.1.29-192.168.1.70`).
+- **Rancher (`.29`)** no es accesible por su IP de LoadBalancer: esa IP la usa legítimamente
+  un monitor Sense. Moverlo implica cambiar `server-url`, el ingress
+  (`192.168.1.29.sslip.io`), el certificado y la configuración de Fleet; queda para una
+  ventana planificada. (Uptime Kuma, que chocaba con un Ring en `.30`, se movió a `.33`
+  el 2026-10-18 y la `.30` se excluyó del pool.)
 - **factuscan-backend (`.61:8000`)** responde desde dentro del cluster pero no desde el Mac (en revisión).
 - `TRUENAS-ISCSI`, `NFS_SHARE`, `NFS_SERVER` aparecen inactivos en Proxmox: apuntan a un
   portal viejo (`10.10.58.100`). Preexistente.
