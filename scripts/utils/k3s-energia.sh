@@ -283,6 +283,13 @@ cmd_arrancar() {
   api || { err "API no responde"; exit 1; }
 
   paso "7/10 Driver de almacenamiento (democratic-csi)"
+  # Los pods de nodo CSI de antes del apagado pueden quedar en Unknown/Terminating y el
+  # DaemonSet no los reemplaza hasta borrarlos (pasó el 2026-10-26 en worker-03): sin
+  # ellos el nodo no monta volúmenes. Se borran antes de esperar.
+  kc -n $CSI_NS get pods --no-headers 2>/dev/null | awk '$3=="Terminating" || $3=="Unknown" {print $1}' |
+  while read -r p; do
+    run "kc -n $CSI_NS delete pod $p --grace-period=0 --force >/dev/null 2>&1" && warn "borrado forzado: $CSI_NS/$p"
+  done
   [ $DRY = 1 ] || espera 600 "pods de nodo CSI listos" "csi_nodos_ok"
   # Los controladores pueden quedar con el external-attacher colgado si arrancaron antes
   # que el driver (pasó el 2026-10-18): se reinician siempre, no tienen estado.

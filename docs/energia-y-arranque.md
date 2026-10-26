@@ -3,7 +3,7 @@
 Runbook para apagar y volver a encender toda la infraestructura (cluster K3s, hosts
 Proxmox y TrueNAS) sin dejar el cluster trabado, y qué hacer después de un corte de luz.
 
-> Creado el 2026-10-18 tras el corte de luz del 2026-10-17. Script: [`scripts/utils/k3s-energia.sh`](../scripts/utils/k3s-energia.sh)
+> Creado el 2026-10-18 tras el corte de luz del 2026-10-17; actualizado el 2026-10-26 tras el segundo corte (procedimiento con baterías + postmortem). Script: [`scripts/utils/k3s-energia.sh`](../scripts/utils/k3s-energia.sh)
 > (instalado como `~/bin/k3s-energia` en el Mac mini M4 Pro, 192.168.1.201).
 
 ---
@@ -20,6 +20,67 @@ k3s-energia preparar-host <ip>        # dejar listo un host Proxmox nuevo
 ```
 
 Logs de cada corrida: `~/Library/Logs/k3s-energia/`.
+
+---
+
+## 🔋 Corte de luz con baterías: cuándo y cómo apagar
+
+> Contexto (oct-2026): cortes de energía frecuentes a nivel país; las baterías duran ~3 h.
+> Si se acaban con todo encendido, el apagado es brusco y la recuperación cuesta más
+> (pods trabados, discos de VMs sobre NFS, posible daño de filesystem: ver postmortems).
+
+**Requisitos para que el procedimiento funcione**
+
+- En baterías tienen que estar: **TrueNAS, DELL, msa, msn2, el switch/router y el Mac mini
+  (192.168.1.201)**, que es desde donde corre el script.
+  ⚠️ En el corte del 2026-10-26, TrueNAS siguió encendido pero los 3 hosts Proxmox se
+  apagaron en el mismo minuto: confirmar que los hosts estén conectados a la salida
+  *con batería* del UPS (no solo a la de supresión de picos).
+- El apagado completo tarda **~15 min normalmente y 30 min en el peor caso**
+  (Postgres 5 + workers 3 + masters 2 + resto de VMs 3 + hosts 5 + TrueNAS 10).
+
+**Cuándo apagar**
+
+| Tiempo sin luz | Acción |
+|---|---|
+| 0–60 min | Nada. Vigilar el nivel de batería. |
+| **60–90 min** | **Si no hay fecha de regreso de la luz: apagar** (deja ≥1 h de margen). |
+| Batería < 40 % o anuncio de corte largo | Apagar ya, sin esperar. |
+
+La batería rinde menos con carga alta y con la edad. Mejor apagar de más que de menos.
+
+**Cómo apagar (desde el Mac mini)**
+
+```bash
+k3s-energia estado              # 1. foto del estado antes de apagar (queda en el log)
+k3s-energia apagar --dry-run    # 2. opcional: ver qué va a hacer
+k3s-energia apagar              # 3. escribir APAGAR cuando lo pida
+```
+
+Orden: hiberna Postgres → workers → masters → resto de VMs/CTs → hosts Proxmox →
+**TrueNAS al final**. Cuando el script termina, se puede apagar el Mac mini.
+
+> La regla "TrueNAS nunca se apaga" vale para la operación normal. En un corte con
+> baterías, TrueNAS **sí** se apaga, siempre como último paso.
+
+**Si el Mac mini no está disponible (a mano, en este orden)**
+
+1. `kubectl -n contactos annotate cluster.postgresql.cnpg.io postgres-contactos cnpg.io/hibernation=on --overwrite`
+   y esperar a que desaparezcan los pods `postgres-contactos-*`.
+2. En la web de Proxmox (https://192.168.1.7:8006): *Shutdown* de los workers 3005, 3006 y 3007,
+   y después de los masters 3001, 3002 y 3003.
+3. *Shutdown* de cada host (DELL, msa y msn2): apaga ordenadamente el resto de sus VMs.
+4. TrueNAS: web → *Power* → *Shut Down*.
+
+**Al volver la luz**
+
+1. Esperar **10–15 min de luz estable** antes de encender nada: en estos cortes la luz suele
+   ir y venir, y un segundo corte en pleno arranque es lo peor.
+2. Encender **TrueNAS primero** y después DELL, msa y msn2. El WOL **no** funciona tras un corte
+   total (comprobado el 2026-10-26), hay que encenderlos a mano hasta que la BIOS tenga
+   *Restore on AC Power Loss*.
+3. `k3s-energia arrancar`: es idempotente y repara lo típico. Al final muestra el `estado`.
+4. Si queda algo raro, revisar la tabla de trabas en los postmortems de abajo.
 
 ---
 
@@ -142,6 +203,48 @@ Todas estas reparaciones quedaron automatizadas en los pasos 7–10 de `arrancar
 
 ---
 
+## Postmortem: corte de luz del 2026-10-26
+
+**Qué pasó**
+
+- 00:49–00:50: los 3 hosts Proxmox se apagaron. msn2 registró `systemd-logind: Power key pressed short`
+  → `Powering off`, un apagado *ordenado* disparado por la caída de voltaje, que la placa
+  Minisforum interpreta como si se hubiera pulsado el botón. El DELL se apagó de golpe (su
+  último log es de las 00:50:03). **TrueNAS siguió encendido** (uptime desde el 2026-10-18); solo
+  perdió el link de sus puertos 10G `enp1s0f0/f1` cuando se apagaron los hosts.
+- 10:28 revisión: `k3s-energia estado` → TrueNAS ok, hosts sin respuesta (ARP `FAILED` también
+  desde TrueNAS, así que estaban apagados de verdad y no era un problema de red del Mac).
+- `k3s-energia arrancar` (primera corrida real) mandó WOL desde el Mac, repetido desde TrueNAS:
+  **ningún host despertó en más de 5 min**. Se encendieron a mano a las ~10:43.
+- Después, **todo arrancó solo**: el hook `esperar-truenas` funcionó, masters y workers subieron
+  con `onboot` sin `qm start` manual, y el quórum y el storage TRUENAS quedaron OK en ~1 min.
+- Postgres CNPG: sano al subir (primario `-2`, réplica en streaming con lag de 27 ms, `contactos`
+  con sus 9 filas). El backup diario de las 00:00 corrió al recuperarse.
+
+**Trabas y solución**
+
+| Síntoma | Causa | Solución |
+|---|---|---|
+| WOL sin efecto en los 3 hosts | Tras un corte total, la NIC no queda escuchando (ErP/Deep Sleep; en el DELL, además, la NIC es USB) | Encender a mano. Solución definitiva: BIOS *Restore on AC Power Loss = On* |
+| Paso 7 de `arrancar` trabado 10 min en "pods de nodo CSI listos" | En worker-03 los pods `democratic-csi-*-node` de antes del corte quedaron en `Unknown`; el DaemonSet no los reemplaza mientras existan y el borrado recién ocurría en el paso 8 | `kubectl -n democratic-csi delete pod <pod> --grace-period=0 --force`. **Corregido en el script:** el paso 7 ahora borra primero los pods CSI en `Unknown`/`Terminating` |
+| worker-03 con load 20–30, `CreateContainer … context deadline exceeded`, `driver name org.democratic-csi.* not found` | Saturación de I/O: el disco qcow2 de worker-03 está en NFS de TrueNAS y pasa por la NIC USB del DELL. Igual que el 17-oct | Se normaliza sola en ~15 min. Ver pendiente "disco de worker-03" |
+| uptime-kuma y registry en `ContainerCreating` con `Multi-Attach error` | El VolumeAttachment viejo (worker-03) seguía activo | Se resolvió solo al reiniciarse los controladores CSI (paso 7) |
+| `prometheus-0` en `CrashLoopBackOff`: `panic: preallocate: no space left on device` | **PVC de 20 Gi lleno**: `retention=30d` sin `retentionSize`. El corte no lo causó, pero lo dejó en evidencia al reproducir el WAL | PVC ampliado en caliente a **30 Gi** y `retentionSize: 26GB` en el CR `Prometheus` → 64 % de uso. ⚠️ Ver pendientes (Helm) |
+| factuscan-backend `.61:8000` no responde desde el Mac | Problema previo (ver "Problemas conocidos") | — |
+
+**Comandos útiles que se usaron**
+
+```bash
+kubectl get pods -A --no-headers | grep -vE "Running|Completed"
+kubectl -n democratic-csi get pods -o wide                      # ¿algún *-node-* en Unknown?
+ssh rwagner@192.168.1.13 'uptime; cat /proc/pressure/io'        # presión de I/O en worker-03
+kubectl -n monitoring logs prometheus-monitoring-kube-prometheus-prometheus-0 -c prometheus --previous
+kubectl get clusters.postgresql.cnpg.io -A                      # Postgres sano
+ssh root@192.168.1.86 'journalctl -b -1 -n 50'                  # por qué se apagó un host
+```
+
+---
+
 ## Problemas conocidos (no relacionados con el corte)
 
 - **Rancher (`.29`)** no es accesible por su IP de LoadBalancer: esa IP la usa legítimamente
@@ -149,18 +252,31 @@ Todas estas reparaciones quedaron automatizadas en los pasos 7–10 de `arrancar
   (`192.168.1.29.sslip.io`), el certificado y la configuración de Fleet; queda para una
   ventana planificada. (Uptime Kuma, que chocaba con un Ring en `.30`, se movió a `.33`
   el 2026-10-18 y la `.30` se excluyó del pool.)
-- **factuscan-backend (`.61:8000`)** responde desde dentro del cluster pero no desde el Mac (en revisión).
+- **factuscan-backend (`.61:8000`)** responde desde dentro del cluster pero no desde el Mac (en revisión; sigue igual el 2026-10-26).
 - `TRUENAS-ISCSI`, `NFS_SHARE`, `NFS_SERVER` aparecen inactivos en Proxmox: apuntan a un
   portal viejo (`10.10.58.100`). Preexistente.
 
 ## Pendientes
 
-- [ ] BIOS de TrueNAS: WOL / PCIe PME on, ErP off. Probar WOL real.
-- [ ] Probar WOL del DELL desde apagado total (NIC USB).
-- [ ] *Restore on AC Power Loss* en todos los equipos.
-- [ ] Probar el ciclo completo `apagar` → `arrancar` en una ventana tranquila (hasta ahora solo `--dry-run`).
-- [ ] DELL nuevo (semana del 2026-10-19): agregar a `PVE_HOSTS` y correr `preparar-host`.
-      Considerar sacar nuc10 del cluster Proxmox (`pvecm delnode nuc10`) para no contarlo en el quórum.
+- [ ] **Ventana de mantenimiento al sumar el DELL nuevo** (decidido el 2026-10-26: todo junto, para
+      no apagar y verificar dos veces):
+  - [ ] `k3s-energia apagar` real. Es la primera prueba del apagado; `arrancar` ya se probó en real el 2026-10-26.
+  - [ ] BIOS de **DELL OptiPlex 7010** (F2 → *Power Management*): *AC Recovery = Power On*,
+        *Deep Sleep Control = Disabled*, *Wake on LAN = LAN Only*.
+  - [ ] BIOS de **msa y msn2** (Minisforum "Venus Series", BIOS 1.26; Supr → *Advanced*):
+        *Restore on AC Power Loss = Power On* (o *State After G3 = S0*), *ErP = Disabled*.
+  - [ ] BIOS de TrueNAS: igual, más WOL / PCIe PME on.
+  - [ ] DELL nuevo: unir a Proxmox, `preparar-host`, `PVE_HOSTS`, BIOS. Considerar
+        `pvecm delnode nuc10` para no contarlo en el quórum.
+  - [ ] Probar: desenchufar un host unos segundos y ver que se encienda solo.
+- [ ] Confirmar qué equipos están realmente en la salida con batería del UPS (el 2026-10-26 los
+      hosts cayeron y TrueNAS no).
+- [ ] **Prometheus fuera de Helm:** `retentionSize: 26GB` y el PVC de 30 Gi se aplicaron a mano. Antes
+      del próximo `helm upgrade` de kube-prometheus-stack agregar a los values
+      `prometheus.prometheusSpec.retentionSize: 26GB`; si no, Helm lo borra y el volumen se vuelve a llenar.
+- [ ] Disco de worker-03: está en NFS (TrueNAS) a través de la NIC USB del DELL y se satura en
+      cada arranque. Evaluar moverlo a un disco local del DELL nuevo o repartir la carga.
+- [ ] Opcional: apagado automático desde el UPS (NUT), si el UPS tiene puerto USB/red.
 
 ## Agregar un host Proxmox nuevo
 
