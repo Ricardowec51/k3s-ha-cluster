@@ -33,9 +33,9 @@ Logs de cada corrida: `~/Library/Logs/k3s-energia/`.
 
 - En baterías tienen que estar: **TrueNAS, DELL, msa, msn2, el switch/router y el Mac mini
   (192.168.1.201)**, que es desde donde corre el script.
-  ⚠️ En el corte del 2026-10-26, TrueNAS siguió encendido pero los 3 hosts Proxmox se
-  apagaron en el mismo minuto: confirmar que los hosts estén conectados a la salida
-  *con batería* del UPS (no solo a la de supresión de picos).
+  (Respaldo: paneles solares + baterías, ~3 h. Confirmado por Ricardo el 2026-10-26.)
+- **Tormenta eléctrica:** también es motivo para apagar preventivamente: usar el mismo
+  `k3s-energia apagar`, no el botón de los equipos.
 - El apagado completo tarda **~15 min normalmente y 30 min en el peor caso**
   (Postgres 5 + workers 3 + masters 2 + resto de VMs 3 + hosts 5 + TrueNAS 10).
 
@@ -203,19 +203,23 @@ Todas estas reparaciones quedaron automatizadas en los pasos 7–10 de `arrancar
 
 ---
 
-## Postmortem: corte de luz del 2026-10-26
+## Postmortem: apagado preventivo por tormenta eléctrica (2026-10-26)
 
 **Qué pasó**
 
-- 00:49–00:50: los 3 hosts Proxmox se apagaron. msn2 registró `systemd-logind: Power key pressed short`
-  → `Powering off`, un apagado *ordenado* disparado por la caída de voltaje, que la placa
-  Minisforum interpreta como si se hubiera pulsado el botón. El DELL se apagó de golpe (su
-  último log es de las 00:50:03). **TrueNAS siguió encendido** (uptime desde el 2026-10-18); solo
-  perdió el link de sus puertos 10G `enp1s0f0/f1` cuando se apagaron los hosts.
+- 00:49–00:50: **Ricardo apagó a mano los 3 hosts Proxmox** como protección ante una tormenta con
+  muchos rayos. Después hubo un corte de luz de ~2 h, que las baterías (solares, ~3 h) habrían
+  cubierto. msn2 registró `systemd-logind: Power key pressed short` → `Powering off` (botón =
+  apagado ordenado del host, pero **sin apagar antes el cluster**). El DELL se cortó de golpe (su
+  último log es de las 00:50:03). **TrueNAS quedó encendido** (uptime desde el 2026-10-18); solo
+  perdió el link de sus puertos 10G `enp1s0f0/f1` al apagarse los hosts.
+- **Lección:** el apagado por botón deja pods trabados y el CSI sucio al volver. Para un apagado
+  preventivo (tormenta, corte largo) usar `k3s-energia apagar`: ver la sección 🔋.
 - 10:28 revisión: `k3s-energia estado` → TrueNAS ok, hosts sin respuesta (ARP `FAILED` también
   desde TrueNAS, así que estaban apagados de verdad y no era un problema de red del Mac).
 - `k3s-energia arrancar` (primera corrida real) mandó WOL desde el Mac, repetido desde TrueNAS:
-  **ningún host despertó en más de 5 min**. Se encendieron a mano a las ~10:43.
+  **ningún host despertó en más de 5 min**. Se encendieron a mano a las ~10:43. (No es concluyente
+  sobre el WOL: el DELL se cortó en seco y la NIC puede no quedar armada; probarlo en la ventana de mantenimiento.)
 - Después, **todo arrancó solo**: el hook `esperar-truenas` funcionó, masters y workers subieron
   con `onboot` sin `qm start` manual, y el quórum y el storage TRUENAS quedaron OK en ~1 min.
 - Postgres CNPG: sano al subir (primario `-2`, réplica en streaming con lag de 27 ms, `contactos`
@@ -225,7 +229,7 @@ Todas estas reparaciones quedaron automatizadas en los pasos 7–10 de `arrancar
 
 | Síntoma | Causa | Solución |
 |---|---|---|
-| WOL sin efecto en los 3 hosts | Tras un corte total, la NIC no queda escuchando (ErP/Deep Sleep; en el DELL, además, la NIC es USB) | Encender a mano. Solución definitiva: BIOS *Restore on AC Power Loss = On* |
+| WOL sin efecto en los 3 hosts | Probablemente ErP/Deep Sleep tras apagado por botón/corte (en el DELL, además, la NIC es USB) | Encender a mano. Solución definitiva: BIOS *Restore on AC Power Loss = On* |
 | Paso 7 de `arrancar` trabado 10 min en "pods de nodo CSI listos" | En worker-03 los pods `democratic-csi-*-node` de antes del corte quedaron en `Unknown`; el DaemonSet no los reemplaza mientras existan y el borrado recién ocurría en el paso 8 | `kubectl -n democratic-csi delete pod <pod> --grace-period=0 --force`. **Corregido en el script:** el paso 7 ahora borra primero los pods CSI en `Unknown`/`Terminating` |
 | worker-03 con load 20–30, `CreateContainer … context deadline exceeded`, `driver name org.democratic-csi.* not found` | Saturación de I/O: el disco qcow2 de worker-03 está en NFS de TrueNAS y pasa por la NIC USB del DELL. Igual que el 17-oct | Se normaliza sola en ~15 min. Ver pendiente "disco de worker-03" |
 | uptime-kuma y registry en `ContainerCreating` con `Multi-Attach error` | El VolumeAttachment viejo (worker-03) seguía activo | Se resolvió solo al reiniciarse los controladores CSI (paso 7) |
@@ -269,8 +273,6 @@ ssh root@192.168.1.86 'journalctl -b -1 -n 50'                  # por qué se ap
   - [ ] DELL nuevo: unir a Proxmox, `preparar-host`, `PVE_HOSTS`, BIOS. Considerar
         `pvecm delnode nuc10` para no contarlo en el quórum.
   - [ ] Probar: desenchufar un host unos segundos y ver que se encienda solo.
-- [ ] Confirmar qué equipos están realmente en la salida con batería del UPS (el 2026-10-26 los
-      hosts cayeron y TrueNAS no).
 - [ ] **Prometheus fuera de Helm:** `retentionSize: 26GB` y el PVC de 30 Gi se aplicaron a mano. Antes
       del próximo `helm upgrade` de kube-prometheus-stack agregar a los values
       `prometheus.prometheusSpec.retentionSize: 26GB`; si no, Helm lo borra y el volumen se vuelve a llenar.
