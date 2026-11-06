@@ -226,7 +226,7 @@ image: 192.168.1.64:5000/mi-imagen
 | Script | Uso |
 |---|---|
 | `k3s-energia.sh` | Apagado y arranque ordenado de todo (cluster, hosts Proxmox, TrueNAS) con WOL y reparaciones post-arranque. Runbook: [`docs/energia-y-arranque.md`](docs/energia-y-arranque.md) |
-| `monthly-maintenance.sh` | Mantenimiento mensual de hosts Proxmox, uno a la vez, sin perder quórum de etcd |
+| `monthly-maintenance.sh` | Mantenimiento mensual de hosts Proxmox, uno a la vez, sin perder quórum de etcd. Runbook: [`docs/mantenimiento-proxmox.md`](docs/mantenimiento-proxmox.md) |
 | `health-check.sh` | Chequeo de salud del cluster |
 | `backup-cluster.sh` | Backup del cluster |
 
