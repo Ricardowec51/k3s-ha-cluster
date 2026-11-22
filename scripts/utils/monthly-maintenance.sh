@@ -25,7 +25,7 @@
 set -uo pipefail
 
 # --- Configuración (editar al reemplazar nuc10 o agregar hosts) ---------------------
-HOSTS="DELL:192.168.1.7 msa:192.168.1.143 msn2:192.168.1.86"   # nombre Proxmox:IP
+HOSTS="DELL1:192.168.1.80 DELL:192.168.1.7 msa:192.168.1.143 msn2:192.168.1.86"   # nombre Proxmox:IP
 API_IPS="192.168.1.21 192.168.1.22 192.168.1.23"               # masters, para kubectl
 SOAK_MIN="${SOAK_MIN:-15}"          # minutos que los OTROS hosts deben llevar encendidos
 CNPG_NS="contactos"

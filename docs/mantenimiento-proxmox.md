@@ -1,6 +1,6 @@
 # Mantenimiento de hosts Proxmox (actualización y reinicio en rotación)
 
-Runbook para actualizar Proxmox y reiniciar los hosts (DELL, msa, msn2) **sin apagar el
+Runbook para actualizar Proxmox y reiniciar los hosts (DELL1, msa, msn2; DELL vacío) **sin apagar el
 cluster K3s**: un host a la vez, vaciando antes su worker y moviendo el primario de
 Postgres si está ahí.
 
@@ -22,13 +22,14 @@ $S restore <host>            # espera nodos Ready + uncordon + verifica etcd y p
 # esperar 15 min y repetir con el siguiente host
 ```
 
-Hosts: **DELL** 192.168.1.7 · **msa** 192.168.1.143 · **msn2** 192.168.1.86.
+Hosts: **DELL1** 192.168.1.80 · **msa** 192.168.1.143 · **msn2** 192.168.1.86 · **DELL** 192.168.1.7
+(vacío desde el 2026-11-22: se actualiza y reinicia sin `prepare`/`restore`).
 
 ---
 
 ## Por qué en rotación y no apagando el cluster
 
-- Cada host tiene **1 master + 1 worker** (DELL: master-01 + worker-03; msa: master-02 +
+- Cada host tiene **1 master + 1 worker** (DELL1: master-01 + worker-03; msa: master-02 +
   worker-02; msn2: master-03 + worker-04). Con un host abajo quedan 2 de 3 masters: etcd
   mantiene quórum y los servicios siguen en los otros 2 workers.
 - Los arranques en frío del cluster completo (17-oct, 26-oct, 03-nov) dejaron pods CSI
@@ -47,7 +48,7 @@ Hosts: **DELL** 192.168.1.7 · **msa** 192.168.1.143 · **msn2** 192.168.1.86.
    ```
 2. **Ver si hace falta reiniciar** (kernel en uso vs. el más nuevo instalado):
    ```bash
-   for ip in 192.168.1.7 192.168.1.143 192.168.1.86; do
+   for ip in 192.168.1.80 192.168.1.7 192.168.1.143 192.168.1.86; do
      ssh root@$ip 'echo "$(hostname): corre $(uname -r) | instalado $(ls /boot/vmlinuz-* | sed "s#.*/vmlinuz-##" | sort -V | tail -1)"'
    done
    ```
@@ -83,7 +84,7 @@ Hosts: **DELL** 192.168.1.7 · **msa** 192.168.1.143 · **msn2** 192.168.1.86.
 |---|---|---|
 | Kernel nuevo | `uname -r` | El más nuevo instalado |
 | VMs arriba | `qm list` | Todas `running` |
-| no-turbo (solo msa y msn2) | `systemctl is-active no-turbo; cat /sys/devices/system/cpu/intel_pstate/no_turbo` | `active` y `1` |
+| no-turbo (msa, msn2 y DELL; en DELL también governor `powersave`) | `systemctl is-active no-turbo; cat /sys/devices/system/cpu/intel_pstate/no_turbo` | `active` y `1` |
 | Postgres | `kubectl -n contactos get clusters.postgresql.cnpg.io` | `2 2 Cluster in healthy state` |
 | Servicios | `k3s-energia estado` (sección Servicios) | Todos ✔ |
 
@@ -93,7 +94,8 @@ Hosts: **DELL** 192.168.1.7 · **msa** 192.168.1.143 · **msn2** 192.168.1.86.
 
 | Host | VMs / CTs | Efecto mientras está abajo |
 |---|---|---|
-| DELL | PBS (100), k3-admin (1102) | Sin backups de PBS unos minutos |
+| DELL1 | PBS (100), k3-admin (1102) | Sin backups de PBS unos minutos |
+| DELL | (ninguna desde el 2026-11-22) | Nada; solo baja a 3 de 4 votos de Proxmox |
 | msa | Server24Tailscale (104), OpenClaw20 (881) | **Sin acceso remoto por Tailscale** |
 | msn2 | VM-N8N (444), Dockershim (770), npm (7771), CT scanopy (102) | Sin n8n ni proxy inverso unos minutos |
 
@@ -107,14 +109,14 @@ Hosts: **DELL** 192.168.1.7 · **msa** 192.168.1.143 · **msn2** 192.168.1.86.
 | Tras volver un host, pods CSI de su worker en `CrashLoopBackOff`; Postgres o pgAdmin en `Init:0/1` con `Multi-Attach` | El driver democratic-csi del worker tarda en registrarse | Esperar ~10 min: se resolvió solo el 2026-11-06. Si no, borrar esos pods CSI node para que se recreen |
 | Postgres `1/2` un rato tras el switchover | La réplica se recrea en otro worker | Esperar a `Cluster in healthy state` antes del siguiente host |
 | msa arranca con el kernel anterior | Servicio `kexec-pve` (ver abajo) | Desactivado desde el 2026-11-06; si reaparece, ver la sección de msa |
-| Proxmox muestra 2 de 4 votos | nuc10 (muerta) sigue contando como miembro | Normal mientras un host está abajo; vuelve a 3 al regresar |
+| Proxmox muestra 3 de 4 votos | Un host está reiniciando | Normal: 3 de 4 = quórum; vuelve a 4 al regresar |
 
 ### Quórum de Proxmox
 
-Proxmox espera 4 votos (cuenta a nuc10, que está muerta). Con un host apagado quedan 2 de 4:
-**sin quórum**. Las VMs siguen corriendo, pero no se puede arrancar, migrar ni cambiar la
-configuración de ninguna VM hasta que el host vuelva. Al sumar el DELL nuevo esto deja de
-pasar (5 esperados, 4 en línea, con uno abajo quedan 3 = quórum).
+Desde el 2026-11-22 el cluster MS-01 tiene 4 nodos vivos (DELL1, DELL, msa, msn2); nuc10 y
+BOSC se eliminaron. Con un host apagado quedan 3 de 4 = **quórum**, así que Proxmox sigue
+operativo. Antes (hasta el 2026-11-22) nuc10 muerta seguía contando y un host abajo dejaba el
+cluster sin quórum. Si se apagan **dos** hosts a la vez se pierde el quórum: no hacerlo.
 
 ### msa y `kexec-pve`
 
@@ -137,5 +139,6 @@ kernel que había en el arranque anterior**, así que un kernel recién instalad
 
 | Fecha | Kernel | Orden | Notas |
 |---|---|---|---|
+| 2026-11-22 | 7.0.14-28 → 7.0.14-30 (pve 9.2.32) | DELL → msn2 → msa | Antes: nuc10 y BOSC eliminados del cluster PVE y DELL1 (.80) unido. msa arrancó bien por BIOS al primer reinicio (sin `kexec-pve`). Primario de Postgres pasó a `postgres-contactos-1`. pgAdmin ~3 min sin responder (repull de imagen). Después: master-01, worker-03, PBS y k3-admin migrados en caliente de DELL a DELL1 (DELL calentaba); k3-admin bajado a 4 vCPU |
 | 2026-11-06 | 7.0.14-17 → 7.0.14-28 (pve 9.2.26) | DELL → msa (×2) → msn2 | msa reinició dos veces por `kexec-pve` (luego desactivado). Homepage en ImagePullBackOff bloqueó un `prepare`. CSI de worker-02 en CrashLoop ~10 min tras volver msa. Primario de Postgres pasó a `postgres-contactos-1` |
 | 2026-09-19 | 7.0.14-11 → 7.0.14-17 | (DELL y msn2 el 18-sep sin el script) → msa (×2) | Primera corrida real del script. msa arrancó el -11; se atribuyó a GRUB, pero era `kexec-pve` |
