@@ -251,11 +251,13 @@ ssh root@192.168.1.86 'journalctl -b -1 -n 50'                  # por qué se ap
 
 ## Problemas conocidos (no relacionados con el corte)
 
-- **Rancher (`.29`)** no es accesible por su IP de LoadBalancer: esa IP la usa legítimamente
-  un monitor Sense. Moverlo implica cambiar `server-url`, el ingress
-  (`192.168.1.29.sslip.io`), el certificado y la configuración de Fleet; queda para una
-  ventana planificada. (Uptime Kuma, que chocaba con un Ring en `.30`, se movió a `.33`
-  el 2026-10-18 y la `.30` se excluyó del pool.)
+- ~~**Rancher (`.29`)** no accesible: la IP la usa un monitor Sense.~~ **Resuelto el 2026-11-22:**
+  Rancher se movió a `192.168.1.32` (`https://192.168.1.32.sslip.io`): anotación
+  `metallb.io/loadBalancerIPs` en `rancher-lb`, `helm upgrade --set hostname=...` (con
+  `startupProbe.failureThreshold=60`: los pods tardan 3-4 min en restaurar los catálogos git y
+  con el valor por defecto de 2 min entraban en bucle), `server-url` actualizado (Fleet lo toma
+  solo) y la `.29` sacada del pool. (Uptime Kuma, que chocaba con un Ring en `.30`, se movió a
+  `.33` el 2026-10-18 y la `.30` se excluyó del pool.)
 - **factuscan-backend (`.61:8000`)** responde desde dentro del cluster pero no desde el Mac (en revisión; sigue igual el 2026-10-26).
 - `TRUENAS-ISCSI`, `NFS_SHARE`, `NFS_SERVER` aparecen inactivos en Proxmox: apuntan a un
   portal viejo (`10.10.58.100`). Preexistente.

@@ -38,7 +38,7 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 |---|---|
 | Red local | 192.168.1.0/24 |
 | API server | https://192.168.1.21:6443 |
-| MetalLB pool | 192.168.1.29 – 192.168.1.70 |
+| MetalLB pool | 192.168.1.31 – 192.168.1.70 (la .29 y la .30 quedaron fuera: Sense y Ring) |
 | Registry privado | http://192.168.1.64:5000 |
 | Máquina de control | MacBook Pro M3 — 192.168.1.8 |
 
@@ -46,7 +46,7 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 
 | IP | Servicio | Puerto |
 |---|---|---|
-| 192.168.1.29 | Rancher ⚠️ no accesible desde la LAN: la IP la usa un monitor Sense (pendiente mover) | 443 / 80 |
+| 192.168.1.32 | Rancher — `https://192.168.1.32.sslip.io` (movido desde .29 el 2026-11-22) | 443 / 80 |
 | 192.168.1.33 | Uptime Kuma (fijada con `metallb.io/loadBalancerIPs`; antes .30, que usa un dispositivo Ring) | 3001 |
 | 192.168.1.31 | Homepage | 80 |
 | 192.168.1.53 | contactos / admin-panel | 80 |
