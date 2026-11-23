@@ -2,7 +2,8 @@
 
 Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local `192.168.1.0/24`.
 
-> **Estado:** Producción estable — última revisión completa 2026-09-21
+> **Estado:** Ambiente de **desarrollo** y arquitectura de referencia (estable; última revisión completa 2026-09-21).
+> Qué cambiar para llevarlo a producción: [`docs/camino-a-produccion.md`](docs/camino-a-produccion.md).
 
 ---
 
