@@ -82,8 +82,9 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 
 | PVC | Namespace | Tamaño | Tipo | Uso |
 |---|---|---|---|---|
-| postgres-contactos-1 | contactos | 50 Gi | iSCSI | BD primaria CNPG |
-| postgres-contactos-2 | contactos | 50 Gi | iSCSI | Réplica CNPG |
+| postgres-contactos-1 | contactos | 50 Gi | iSCSI | Instancia CNPG |
+| postgres-contactos-2 | contactos | 50 Gi | iSCSI | Instancia CNPG |
+| postgres-contactos-3 | contactos | 50 Gi | iSCSI | Instancia CNPG |
 | postgres-backups-truenas | contactos | 20 Gi | NFS | Backups diarios |
 | pgadmin-data-truenas | contactos | 1 Gi | NFS | pgAdmin |
 | factuscan-storage-iscsi | factuscan | 10 Gi | iSCSI | App factuscan |
@@ -115,9 +116,9 @@ Cluster Kubernetes de alta disponibilidad basado en K3s, corriendo en red local 
 | backend | 2 | 192.168.1.54 | 80 |
 | admin-panel | 2 | 192.168.1.53 | 80 |
 | pgAdmin | 1 | 192.168.1.60 | 80 |
-| PostgreSQL (CNPG) | 2 (1 primary + 1 replica) | 192.168.1.55 | 5432 |
+| PostgreSQL (CNPG) | 3 (1 primary + 2 replicas) | 192.168.1.55 | 5432 |
 
-BD: cluster CNPG `postgres-contactos` — primary en `postgres-contactos-1`, réplica en `postgres-contactos-2`.
+BD: cluster CNPG `postgres-contactos` — 3 instancias, una por worker (`-1` worker-02, `-2` worker-04, `-3` worker-03; desde 2026-11-23). El primario rota con cada mantenimiento: ver `kubectl -n contactos get cluster postgres-contactos` (al 2026-11-23 es `-2`).
 
 ### factuscan
 
